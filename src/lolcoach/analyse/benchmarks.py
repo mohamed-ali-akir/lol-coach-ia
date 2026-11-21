@@ -64,6 +64,7 @@ class Group(TypedDict):
 
     n: int
     metrics: dict[str, list[float]]
+    means: dict[str, float]  # moyenne de chaque statistique (repère d'une moyenne de joueur)
 
 
 @dataclass
@@ -73,31 +74,49 @@ class Benchmarks:
     n_games: int = 0
     trained_at: str = ""
 
-    def _group(self, tier: str | None, role: str, win: bool) -> tuple[str, Group] | None:
+    def tier_used(self, tier: str | None, role: str) -> str | None:
+        """Rang réellement utilisé pour comparer : le rang demandé s'il a des repères pour les
+        victoires ET pour les défaites, sinon tous rangs confondus (ALL), sinon None.
+
+        Le choix vaut pour tout le rôle : on ne compare jamais les victoires à un rang et les
+        défaites à un autre, ce que le texte du diagnostic ne saurait pas dire.
+        """
         for candidate in (tier, ALL_TIERS):
-            if candidate and _key(candidate, role, win) in self.groups:
-                return candidate, self.groups[_key(candidate, role, win)]
+            if candidate and all(_key(candidate, role, win) in self.groups
+                                 for win in (True, False)):
+                return candidate
         return None
 
-    def tier_used(self, tier: str | None, role: str) -> str | None:
-        """Rang réellement utilisé pour comparer (ALL si le rang demandé manque de données)."""
-        found = self._group(tier, role, True) or self._group(tier, role, False)
-        return found[0] if found else None
+    def _group(self, tier: str | None, role: str, win: bool) -> Group | None:
+        used = self.tier_used(tier, role)
+        return None if used is None else self.groups.get(_key(used, role, win))
 
     def percentile(self, metric: str, value: float, tier: str | None, role: str, win: bool
                    ) -> float | None:
         """Rang du joueur de 0 à 100, où 100 est toujours le meilleur."""
-        found = self._group(tier, role, win)
-        if found is None or metric not in found[1]["metrics"]:
+        group = self._group(tier, role, win)
+        if group is None or metric not in group["metrics"]:
             return None
-        raw = _percentile(np.asarray(found[1]["metrics"][metric], dtype=float), value)
+        raw = _percentile(np.asarray(group["metrics"][metric], dtype=float), value)
         return raw if METRICS_BY_KEY[metric].higher_is_better else 100.0 - raw
 
     def median(self, metric: str, tier: str | None, role: str, win: bool) -> float | None:
-        found = self._group(tier, role, win)
-        if found is None or metric not in found[1]["metrics"]:
+        """Valeur typique sur UNE partie : à comparer à une partie du joueur."""
+        group = self._group(tier, role, win)
+        if group is None or metric not in group["metrics"]:
             return None
-        return float(found[1]["metrics"][metric][len(QUANTILES) // 2])
+        return float(group["metrics"][metric][len(QUANTILES) // 2])
+
+    def mean(self, metric: str, tier: str | None, role: str, win: bool) -> float | None:
+        """Moyenne des joueurs comparables : à comparer à la MOYENNE du joueur. Pour une
+        statistique qui vaut souvent 0 (morts isolées), la médiane vaudrait 0 et ferait
+        paraître tout le monde en retard."""
+        group = self._group(tier, role, win)
+        if group is None:
+            return None
+        if metric in group["means"]:
+            return group["means"][metric]
+        return self.median(metric, tier, role, win)  # anciens fichiers de repères, sans moyennes
 
     def weight(self, role: str, metric: str) -> float:
         weights = self.importance.get(role) or {}
@@ -127,7 +146,9 @@ class Benchmarks:
                 if any(len(grid) != len(QUANTILES) or sorted(grid) != grid
                        for grid in metrics.values()):
                     raise ValueError(f"repère incohérent : {key}")
-                groups[str(key)] = {"n": int(group["n"]), "metrics": metrics}
+                means = {str(m): float(v) for m, v in (group.get("means") or {}).items()
+                         if m in metrics and np.isfinite(float(v))}
+                groups[str(key)] = {"n": int(group["n"]), "metrics": metrics, "means": means}
             importance = {str(role): {str(m): float(w) for m, w in weights.items()}
                           for role, weights in data["importance"].items()}
             return Benchmarks(groups, importance, int(data["n_games"]),
@@ -195,10 +216,14 @@ def build_benchmarks(games: Iterable[GameMetrics]) -> Benchmarks:
         needed = MIN_ANY if key.startswith(ALL_TIERS + "|") else MIN_GROUP
         if counts[key] < needed:
             continue
-        metrics = {metric: [float(v) for v in np.percentile(series, QUANTILES)]
-                   for metric, series in bucket.items() if len(series) >= MIN_ANY}
-        if metrics:
-            groups[key] = {"n": counts[key], "metrics": metrics}
+        kept = {metric: series for metric, series in bucket.items() if len(series) >= MIN_ANY}
+        if kept:
+            groups[key] = {
+                "n": counts[key],
+                "metrics": {metric: [float(v) for v in np.percentile(series, QUANTILES)]
+                            for metric, series in kept.items()},
+                "means": {metric: float(np.mean(series)) for metric, series in kept.items()},
+            }
 
     importance = {role: _importance(role, by_role[role]) for role in ROLES if by_role[role]}
     return Benchmarks(groups, importance, total, now_iso())

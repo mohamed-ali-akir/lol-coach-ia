@@ -25,6 +25,10 @@ from lolcoach.analyse.metrics import (
 MIN_GAMES = 5
 MAX_PRIORITIES = 3
 STRENGTH_PERCENTILE = 65.0
+# Un retard ne devient une priorité que s'il est net ET qu'il ne peut guère venir du hasard :
+# sans cette marge, un joueur parfaitement moyen recevait presque toujours 3 « priorités ».
+PRIORITY_PERCENTILE = 40.0  # rang moyen maximal pour parler d'un point faible
+CONFIDENCE_Z = 1.64  # le rang moyen doit rester sous 50 avec 95 % de confiance
 
 
 class DiagnosticError(Exception):
@@ -39,9 +43,11 @@ class Finding:
     family_label: str
     value: float  # moyenne du joueur
     value_text: str
-    reference: float  # médiane des joueurs comparables
+    reference: float  # moyenne des joueurs comparables
     reference_text: str
     percentile: float  # 0 à 100, 100 = le meilleur
+    margin: float  # incertitude sur ce rang (erreur type), en points
+    significant: bool  # retard net et peu explicable par le hasard
     importance: float  # poids de la statistique dans la victoire (somme = 1 par rôle)
     priority: float
     n_games: int
@@ -97,9 +103,9 @@ def _finding(metric: Metric, games: list[GameMetrics], benchmarks: Benchmarks,
         if value is None:
             continue
         percentile = benchmarks.percentile(metric.key, value, tier, role, game.win)
-        median = benchmarks.median(metric.key, tier, role, game.win)
-        if percentile is not None and median is not None:
-            scored.append((game, value, percentile, median))
+        reference = benchmarks.mean(metric.key, tier, role, game.win)
+        if percentile is not None and reference is not None:
+            scored.append((game, value, percentile, reference))
     if len(scored) < MIN_GAMES:
         return None
 
@@ -109,6 +115,11 @@ def _finding(metric: Metric, games: list[GameMetrics], benchmarks: Benchmarks,
     reference = sum(s[3] for s in scored) / count
     importance = benchmarks.weight(role, metric.key)
     worst = sorted(scored, key=lambda s: s[2])[:3]
+    # Erreur type du rang moyen : plus il y a de parties, plus le rang est sûr.
+    variance = sum((s[2] - percentile) ** 2 for s in scored) / (count - 1)
+    margin = (variance / count) ** 0.5
+    significant = (percentile <= PRIORITY_PERCENTILE
+                   and percentile + CONFIDENCE_Z * margin < 50.0)
     return Finding(
         metric=metric.key,
         label=metric.label,
@@ -119,8 +130,10 @@ def _finding(metric: Metric, games: list[GameMetrics], benchmarks: Benchmarks,
         reference=reference,
         reference_text=metric.format(reference),
         percentile=percentile,
+        margin=margin,
+        significant=significant,
         importance=importance,
-        priority=importance * max(0.0, 50.0 - percentile) / 50.0,
+        priority=importance * (50.0 - percentile) / 50.0 if significant else 0.0,
         n_games=count,
         advice=metric.advice,
         drill=metric.drill,

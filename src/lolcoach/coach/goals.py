@@ -12,6 +12,7 @@ Règles :
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass
 
@@ -28,6 +29,9 @@ MAX_ACTIVE = 3
 DEFAULT_WINDOW = 10
 MIN_WINDOW, MAX_WINDOW = 3, 50
 HISTORY_GAMES = 100  # parties relues pour mesurer l'avancement
+# La vérification « pas de doublon, 3 objectifs au plus » et l'enregistrement doivent se suivre
+# sans qu'une autre requête s'intercale (l'API traite plusieurs requêtes à la fois).
+_CREATE_LOCK = threading.Lock()
 
 
 class GoalError(Exception):
@@ -106,7 +110,7 @@ def create_goal(engine: Engine, puuid: str, metric_key: str, role: str, baseline
         direction = "supérieure" if metric.higher_is_better else "inférieure"
         raise GoalError(f"La cible doit être {direction} à la valeur de départ.")
 
-    with engine.begin() as conn:
+    with _CREATE_LOCK, engine.begin() as conn:
         active = conn.execute(
             select(db.goals.c.metric).where(db.goals.c.puuid == puuid,
                                             db.goals.c.status == ACTIVE)

@@ -46,7 +46,7 @@ def parse_timeline(
     """
     try:
         return _parse_timeline(dto, match_id, team_of, puuid_of)
-    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as exc:
         log.warning("Timeline %s écartée, format inattendu : %r", match_id, exc)
         return None
 

@@ -4,7 +4,7 @@ Un coach pour League of Legends qui repose sur **des modèles entraînés maison
 
 Il fait ce que fait un coach :
 
-1. **Il diagnostique** : tes statistiques comparées à celles des joueurs de ton rang et de ton rôle, et **3 priorités au plus**, une par thème (farm, phase de lane, survie, vision, jeu en équipe, combat).
+1. **Il diagnostique** : tes statistiques comparées à celles des joueurs de ton rang et de ton rôle, et **3 priorités au plus**, une par thème (farm, phase de lane, survie, vision, jeu en équipe, combat). Un retard ne devient une priorité que s'il est net et qu'il ne peut guère venir du hasard : un joueur dans la moyenne n'en reçoit en général aucune.
 2. **Il montre les moments clés** : chaque mort est classée (prise seul, gank, duel perdu…) et chiffrée en points de probabilité de victoire, **à la minute près**.
 3. **Il donne un conseil et un exercice** pour chaque point faible.
 4. **Il fixe des objectifs** (« 5,3 de farm par minute sur tes 10 prochaines parties ») et vérifie s'ils sont tenus.
@@ -56,7 +56,9 @@ lolcoach-coach objectifs PUUID --proposer
 lolcoach-coach objectifs PUUID --creer cs_per_min
 ```
 
-Avec une clé de développement (100 requêtes toutes les 2 minutes, 2 requêtes par partie), on récupère environ **1 400 parties par heure**. La collecte s'interrompt sans perte (Ctrl+C) et ne retélécharge jamais une partie connue.
+Avec une clé de développement (100 requêtes toutes les 2 minutes, 2 requêtes par partie), on récupère environ **1 400 parties par heure**. La collecte s'interrompt sans perte (Ctrl+C), ne retélécharge jamais une partie connue, et retente toute seule à la collecte suivante une partie dont le téléchargement a échoué.
+
+**Si tu changes de type de clé Riot** (clé de développement → clé personnelle ou de production), les identifiants de joueurs déjà en file deviennent invalides : Riot les calcule par application. Les parties déjà collectées restent utilisables ; relance simplement `classement` et `joueur` pour reconstituer la file.
 
 Autres commandes de collecte : `completer` (timelines manquantes), `reimporter` (reconstruit la base depuis l'archive, sans contacter Riot), `parties --rafraichir-apres 24` (reprend les joueurs déjà vus).
 
@@ -81,7 +83,7 @@ Tout fonctionne sans : le texte de base est complet et gratuit. Avec `--ia`, un 
 | `ollama` | gratuit | modèle local, [Ollama](https://ollama.com) doit tourner sur ton PC |
 | `claude` | payant | `pip install -e ".[claude]"` et `ANTHROPIC_API_KEY` ; modèle par défaut `claude-opus-5-5`, `LOLCOACH_LLM_MODEL=claude-haiku-5-5` coûte bien moins cher |
 
-Garde-fou : le modèle ne reçoit que le texte factuel, et sa réponse est rejetée si elle contient **un seul chiffre ou une seule minute absents des faits**. En cas de rejet ou de panne, tu obtiens le texte de base.
+Garde-fou : le modèle ne reçoit que le texte factuel, et sa réponse est rejetée si elle contient **un seul nombre ou une seule minute absents des faits** (signe compris), des chiffres regroupés autrement, ou une évolution « de X % à Y % » inversée. En cas de rejet ou de panne, tu obtiens le texte de base. Limite : un nombre écrit en toutes lettres n'est pas vérifié, c'est pourquoi le texte de base reste la référence.
 
 ## Ce que les modèles savent faire, et leurs limites
 
@@ -103,7 +105,7 @@ Garde-fou : le modèle ne reçoit que le texte factuel, et sa réponse est rejet
 
 - La clé Riot et la clé du modèle de langage restent dans `.env`, jamais dans Git ni dans les journaux.
 - La base ne contient **aucun pseudo** : les joueurs sont désignés par l'identifiant opaque de Riot (puuid).
-- L'API n'écoute que sur ton PC, exige un jeton sur toutes ses routes, vérifie l'en-tête `Host`, n'autorise aucun site web à lire ses réponses, et plafonne les réécritures payantes par heure.
+- L'API n'écoute que sur ton PC, exige un jeton sur toutes ses routes et le vérifie **avant de lire le corps de la requête** (limité à 16 Ko), vérifie l'en-tête `Host`, n'autorise aucun site web à lire ses réponses, et plafonne les réécritures payantes par heure.
 - Les modèles sont des fichiers **JSON** : pas de fichier binaire exécutable à l'ouverture (pickle).
 - Tout ce qui vient de l'extérieur (réponses de Riot, du modèle de langage, requêtes HTTP) est validé avant usage.
 
@@ -114,7 +116,7 @@ Ce projet n'analyse que des parties **terminées**. Un produit public doit être
 ```bash
 ruff check .          # style
 mypy                  # types, mode strict
-pytest -q             # 158 tests, sans réseau (réponses Riot simulées)
+pytest -q             # 184 tests, sans réseau (réponses Riot simulées)
 
 # Les mêmes tests sur MySQL / MariaDB :
 LOLCOACH_TEST_DATABASE_URL=mysql+pymysql://utilisateur:motdepasse@localhost/ pytest -q

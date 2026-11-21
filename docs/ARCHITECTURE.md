@@ -35,7 +35,15 @@ Les réponses de Riot, celles du modèle de langage et les requêtes HTTP sont v
 - les types d'événements ou de monstres inconnus sont ignorés ou stockés tels quels : un monstre ajouté au jeu plus tard ne casse rien ;
 - `archive.py` valide les noms avant d'en faire un chemin de fichier.
 
-### 2. On peut toujours tout recalculer
+### 2. Aucune partie perdue en silence
+
+Une collecte dure des heures et Riot a des pannes passagères. Une partie dont le téléchargement échoue est notée dans la table `pending_matches` et retentée au début de chaque collecte suivante, cinq fois au plus. Un joueur que Riot refuse définitivement est marqué traité pour ne pas bloquer la file ; un joueur en panne passagère y reste.
+
+L'archive est écrite **avant** la base : si le programme est interrompu entre les deux, la partie est retéléchargée. L'inverse laisserait une partie connue de la base mais absente de l'archive, donc perdue au prochain `reimporter`.
+
+À savoir : Riot calcule les identifiants de joueurs (puuid) par application. Changer de type de clé invalide ceux de la file ; les parties déjà collectées restent utilisables.
+
+### 2 bis. On peut toujours tout recalculer
 
 Riot efface les timelines au bout d'un an environ et les parties au bout de deux. L'archive garde les réponses d'origine : si le schéma change ou si une statistique est ajoutée, `lolcoach-collecte reimporter` reconstruit la base sans rien retélécharger. Désactiver l'archive (`LOLCOACH_ARCHIVE_DIR` vide) fait gagner de la place, mais on perd cette garantie.
 
@@ -58,8 +66,10 @@ Un fichier `pickle` exécute du code à l'ouverture et n'est relisible qu'avec l
 `analyse/report.py` ne produit que des données vérifiables. `coach/redaction.py` les met en phrases, de façon entièrement déterminée : mêmes données, même texte. Un modèle de langage peut réécrire ce texte (`coach/llm.py`), sous trois garde-fous :
 
 1. il ne reçoit que le texte factuel, sans pseudo ni donnée brute ; le nom du champion est nettoyé ;
-2. sa réponse est rejetée si elle contient un chiffre ou une minute absents du texte factuel, un lien, ou une longueur anormale ;
+2. sa réponse est rejetée si elle contient un nombre ou une minute absents du texte factuel (signe compris), des chiffres regroupés autrement, une évolution « de X % à Y % » qui n'existe pas dans ce sens, un lien, ou une longueur anormale ;
 3. toute panne, tout refus ou tout rejet rend le texte factuel.
+
+Ce que la vérification ne voit pas : un nombre écrit en toutes lettres, ou deux chiffres exacts intervertis hors du cas « de X % à Y % ». Le texte factuel reste donc la référence.
 
 Le projet ne dépend donc jamais d'un modèle de langage pour fonctionner.
 
@@ -80,6 +90,10 @@ Pour chaque statistique, on garde ses quantiles par groupe (rang, rôle, victoir
 Le poids d'une statistique est sa capacité, **prise seule**, à distinguer gagnants et perdants à ce rôle (AUC). Un modèle unique avec toutes les statistiques donnait presque tout le poids à une seule de deux statistiques liées (farm et or), ce qui masquait les vraies causes.
 
 Priorité = retard du joueur × poids. Le diagnostic garde au plus une priorité par thème, pour ne pas répéter trois fois le même conseil.
+
+Un retard ne compte que s'il est **net et peu explicable par le hasard** : rang moyen de 40 au plus, et inférieur à 50 avec 95 % de confiance compte tenu du nombre de parties. Sans cette marge, 74 % de joueurs tirés au hasard dans la population recevaient 3 « priorités » ; avec elle, 85 % n'en reçoivent aucune, et un vrai point faible reste détecté (testé).
+
+La moyenne du joueur est comparée à la **moyenne** des joueurs comparables, pas à leur médiane : pour une statistique qui vaut souvent 0 (morts isolées), la médiane vaut 0 et ferait paraître tout le monde en retard. Un rang n'est utilisé comme repère que s'il couvre les victoires et les défaites ; sinon tout est comparé à « tous rangs », et le texte le dit.
 
 ### Probabilité de victoire
 
@@ -109,12 +123,32 @@ Règles simples, appliquées dans l'ordre (voir `classify_deaths`). La distance 
 
 **Mettre à jour les dépendances.** Dependabot propose les mises à jour chaque semaine. La CI teste à la fois les dernières versions autorisées et les versions figées de `requirements-lock.txt` ; pour régénérer ce fichier après une mise à jour : `pip freeze --exclude-editable > requirements-lock.txt` dans un environnement propre où les tests passent.
 
+## Dépendances
+
+Règle du projet : ne s'appuyer que sur des bibliothèques largement utilisées (au moins 1 000 étoiles sur GitHub), pour qu'elles soient encore maintenues dans plusieurs années. Relevé du 21/11/2026 :
+
+| Bibliothèque | Usage | Étoiles |
+|---|---|---|
+| httpx | appels HTTP (Riot, Ollama) | 15 800 |
+| SQLAlchemy | base de données | 12 300 |
+| Alembic | migrations | 4 500 |
+| scikit-learn | entraînement des modèles | 68 300 |
+| numpy | calcul | 33 500 |
+| python-dotenv | lecture du `.env` | 8 900 |
+| FastAPI, uvicorn (option `api`) | API web | 105 000 et 11 100 |
+| SDK Anthropic (option `claude`) | API Claude | 4 100 |
+| PyMySQL (option `mysql`) | MySQL / MariaDB | 7 900 |
+| pytest, ruff, mypy (développement) | tests, style, types | 14 700, 51 300, 20 700 |
+
+Aucune bibliothèque Python pour l'API Riot n'atteint ce seuil (Cassiopeia : 581, Riot-Watcher : 555) : le client `riot.py` est donc écrit ici, sur httpx. Il tient en un fichier.
+
 ## Sécurité de l'API
 
 Même en local, une API sans protection est exposée : n'importe quelle page web ouverte dans le navigateur peut envoyer des requêtes à `http://127.0.0.1`. D'où :
 
 - un jeton exigé sur toutes les routes sauf `/health`, comparé en temps constant ; s'il n'est pas fourni, il est généré et rangé dans un fichier lisible par l'utilisateur seul ;
-- la vérification de l'en-tête `Host` (attaque par « DNS rebinding ») ;
+- le jeton, l'en-tête `Host` et la taille (16 Ko) sont vérifiés **avant la lecture du corps** de la requête, par un filtre placé devant toute l'application : sans jeton, on ne peut ni faire analyser du JSON ni remplir la mémoire du serveur ;
+- la vérification de l'en-tête `Host` (attaque par « DNS rebinding »), IPv6 compris ; hors du PC, les noms acceptés sont à déclarer (`LOLCOACH_API_ALLOWED_HOSTS`) ;
 - aucune autorisation CORS ;
 - des entrées validées par des formats stricts, des corps de requête qui refusent les champs inconnus ;
 - un plafond horaire de réécritures par le modèle de langage, et une seule synchronisation Riot à la fois ;
@@ -122,6 +156,8 @@ Même en local, une API sans protection est exposée : n'importe quelle page web
 - des erreurs internes sans détail technique.
 
 ## Tests
+
+Le code a été relu par deux relecteurs indépendants, chargés de reproduire chaque défaut avant de le signaler. Les seize défauts confirmés sont corrigés et rejoués par `tests/test_robustesse.py` (et son équivalent dans LoL Companion).
 
 Aucun test ne contacte le réseau. Les réponses de Riot sont produites par le simulateur ou construites à la main ; le modèle de langage est remplacé par un faux. Une base de démonstration de 300 parties, avec un joueur fictif aux défauts connus, sert de référence : le diagnostic doit retrouver ces défauts.
 

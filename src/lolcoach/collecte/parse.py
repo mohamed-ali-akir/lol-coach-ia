@@ -34,10 +34,16 @@ def parse_match(dto: dict[str, Any]) -> ParsedMatch | None:
     """Renvoie (partie, joueurs), ou None si la partie est inutilisable pour l'entraînement."""
     try:
         return _parse_match(dto)
-    except (KeyError, TypeError, ValueError, AttributeError) as exc:
-        match_id = dto.get("metadata", {}).get("matchId") if isinstance(dto, dict) else None
-        log.warning("Partie %s écartée, format inattendu : %r", match_id, exc)
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as exc:
+        log.warning("Partie %s écartée, format inattendu : %r", _match_id(dto), exc)
         return None
+
+
+def _match_id(dto: Any) -> str | None:
+    """Identifiant de la partie pour le journal, quelle que soit la forme de la réponse."""
+    metadata = dto.get("metadata") if isinstance(dto, dict) else None
+    match_id = metadata.get("matchId") if isinstance(metadata, dict) else None
+    return match_id if isinstance(match_id, str) else None
 
 
 def _parse_match(dto: dict[str, Any]) -> ParsedMatch | None:

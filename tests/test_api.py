@@ -5,8 +5,8 @@ import stat
 import pytest
 from fastapi.testclient import TestClient
 
-from lolcoach.api.app import Quota, create_app
-from lolcoach.api.server import _is_loopback, load_or_create_token
+from lolcoach.api.app import MAX_BODY_BYTES, Quota, create_app, host_name
+from lolcoach.api.server import _is_loopback, allowed_hosts, load_or_create_token
 from lolcoach.coach.service import Coach
 from lolcoach.collecte.pipeline import CollectStats
 from lolcoach.demo import DEMO_PUUID, fill_demo_database
@@ -47,6 +47,59 @@ def test_unknown_host_header_is_rejected(demo):
     assert strict.get("/health", headers={"Host": "site-pirate.example"}).status_code == 400
 
 
+def test_body_is_never_read_without_a_valid_token(client):
+    # Corps invalide ou énorme, sans jeton : refusé sur le jeton, sans analyser le corps.
+    response = client.post("/players/sync", content=b"{pas du json", headers={
+        "Content-Type": "application/json"})
+    assert response.status_code == 401
+    huge = b"x" * (5 * 1024 * 1024)
+    assert client.post("/players/sync", content=huge).status_code == 401
+    assert client.post("/une/route/inconnue", content=huge).status_code == 401
+    # Les refus du filtre portent aussi les en-têtes de sécurité.
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_oversized_bodies_are_rejected_even_with_the_token(client):
+    big = b'{"riot_id": "' + b"x" * MAX_BODY_BYTES + b'"}'
+    response = client.post("/players/sync", content=big, headers={
+        **AUTH, "Content-Type": "application/json"})
+    assert response.status_code == 413 and "volumineuse" in response.json()["detail"]
+
+    def chunks():  # envoi par morceaux : aucune taille annoncée à l'avance
+        for _ in range(64):
+            yield b"x" * 1024
+
+    response = client.post("/players/sync", content=chunks(), headers={
+        **AUTH, "Content-Type": "application/json"})
+    assert response.status_code == 413
+    bad_length = client.post("/players/sync", content=b"{}", headers={
+        **AUTH, "Content-Length": "abc"})
+    assert bad_length.status_code in (400, 413)
+
+
+def test_host_header_parsing_and_ipv6(demo):
+    assert host_name("127.0.0.1:8765") == "127.0.0.1"
+    assert host_name("LocalHost") == "localhost"
+    assert host_name("[::1]:8765") == "::1" and host_name("[::1]") == "::1"
+    assert host_name("exemple.test:443") == "exemple.test"
+    local = make_client(Coach(demo.engine, demo.models_dir),
+                        allowed_hosts=("127.0.0.1", "localhost", "::1"))
+    assert local.get("/health", headers={"Host": "[::1]:8765"}).status_code == 200
+    assert local.get("/health", headers={"Host": "localhost:8765"}).status_code == 200
+    assert local.get("/health", headers={"Host": "[2001:db8::1]:8765"}).status_code == 400
+    assert local.get("/health", headers={"Host": ""}).status_code == 400
+
+
+def test_allowed_hosts_for_remote_listening():
+    local = ("127.0.0.1", "localhost", "::1")
+    assert allowed_hosts("127.0.0.1", "") == local
+    # Adresse précise : elle est acceptée d'office. Toutes les interfaces : il faut le dire.
+    assert allowed_hosts("192.168.1.10", "") == (*local, "192.168.1.10")
+    assert allowed_hosts("0.0.0.0", "") is None and allowed_hosts("::", "") is None
+    assert allowed_hosts("0.0.0.0", " Coach.Exemple.test , 192.168.1.10 ") == (
+        *local, "coach.exemple.test", "192.168.1.10")
+
+
 def test_no_cors_and_safe_headers(client):
     response = client.get("/status", headers={**AUTH, "Origin": "https://site-pirate.example"})
     assert "access-control-allow-origin" not in response.headers
@@ -58,8 +111,10 @@ def test_no_cors_and_safe_headers(client):
 
 
 def test_docs_are_off_by_default(client, demo):
-    assert client.get("/docs").status_code == 404
-    assert client.get("/openapi.json").status_code == 404
+    # Sans jeton, on n'apprend même pas quelles routes existent.
+    assert client.get("/docs").status_code == 401
+    assert client.get("/docs", headers=AUTH).status_code == 404
+    assert client.get("/openapi.json", headers=AUTH).status_code == 404
     with_docs = make_client(Coach(demo.engine, demo.models_dir), docs=True)
     assert with_docs.get("/openapi.json").status_code == 200
 
@@ -248,7 +303,10 @@ def test_token_file_is_private_and_stable(tmp_path):
     assert len(token) >= 32 and load_or_create_token(path) == token
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     path.write_text("court\n", encoding="utf-8")  # jeton trop faible : il est remplacé
+    path.chmod(0o644)  # et un fichier laissé lisible par tous redevient privé
     assert len(load_or_create_token(path)) >= 32
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert [f.name for f in path.parent.iterdir()] == ["api-token"]  # pas de fichier temporaire
 
 
 def test_loopback_detection():

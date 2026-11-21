@@ -4,9 +4,17 @@ Le projet fonctionne entièrement sans : le texte de `redaction.py` est complet.
 de langage peut seulement le rendre plus agréable à lire, sous trois garde-fous :
 
 1. il ne reçoit que le texte factuel (aucun pseudo de joueur, aucune donnée brute) ;
-2. sa réponse est vérifiée : tout chiffre ou toute minute absent du texte factuel la
-   fait rejeter ;
+2. sa réponse est vérifiée (`unknown_facts`) et rejetée si elle contient :
+   - un nombre ou une minute absents du texte factuel, signe compris (« -350 » n'est pas
+     « 350 ») ;
+   - des chiffres regroupés autrement (« 3 000 ») ;
+   - une évolution « de X % à Y % » qui n'existe pas dans ce sens dans le texte factuel ;
 3. au moindre problème (panne, refus, réponse rejetée), on rend le texte factuel.
+
+Limite assumée : la vérification porte sur les chiffres écrits en chiffres. Un nombre écrit en
+toutes lettres, ou deux chiffres exacts attribués l'un à la place de l'autre hors du cas
+« de X % à Y % », ne sont pas détectés. C'est pourquoi le texte factuel reste la référence
+et la réécriture une option.
 
 Fournisseurs : Ollama (local, gratuit) ou l'API Claude (payante, clé ANTHROPIC_API_KEY).
 Réglage par variables d'environnement : LOLCOACH_LLM, LOLCOACH_LLM_MODEL, OLLAMA_HOST.
@@ -91,6 +99,8 @@ class OllamaProvider:
             raise LLMError(f"Ollama a répondu {exc.response.status_code}") from exc
         except httpx.TransportError as exc:
             raise LLMError("Ollama est injoignable : est-il lancé ?") from exc
+        except httpx.HTTPError as exc:  # réponse mal encodée, flux interrompu…
+            raise LLMError("réponse d'Ollama illisible") from exc
         except (KeyError, TypeError, ValueError) as exc:
             raise LLMError("réponse d'Ollama illisible") from exc
         if not isinstance(content, str):
@@ -139,6 +149,8 @@ class ClaudeProvider:
             raise LLMError(f"l'API Claude a répondu {exc.status_code}") from exc
         except anthropic.APIConnectionError as exc:
             raise LLMError("API Claude injoignable") from exc
+        except anthropic.APIError as exc:  # toute autre erreur du SDK (réponse invalide…)
+            raise LLMError(f"erreur de l'API Claude ({type(exc).__name__})") from exc
 
         if response.stop_reason == "refusal":
             raise LLMError("le modèle a refusé de répondre")
@@ -166,21 +178,44 @@ def provider_from_env() -> Provider | None:
 
 _TIME_RE = re.compile(r"\b\d{1,3}:\d{2}\b")
 _NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
+_GROUPED_RE = re.compile(r"\d+(?:[ \u00a0\u202f]\d{3})+(?!\d)")  # « 3 000 »
+_CHANGE_RE = re.compile(
+    r"\bde\s+([-−]?\d+(?:[.,]\d+)?)\s*%\s+à\s+([-−]?\d+(?:[.,]\d+)?)\s*%", re.IGNORECASE)
+_SIGNS = "-−"
 
 
-def _facts(text: str) -> tuple[set[str], set[float]]:
-    """Minutes citées (« 14:22 ») et nombres présents dans un texte."""
-    times = set(_TIME_RE.findall(text))
-    numbers = {float(n.replace(",", ".")) for n in _NUMBER_RE.findall(_TIME_RE.sub(" ", text))}
-    return times, numbers
+def _number(text: str) -> float:
+    return float(text.replace("−", "-").replace(",", "."))
+
+
+def _numbers(text: str) -> set[float]:
+    """Nombres d'un texte, signe compris. Un tiret n'est un signe que s'il est collé au
+    nombre et précédé d'un espace, d'une parenthèse ou du début du texte (« -350 or »),
+    pas dans « top-3 » ni dans une liste « - 6:28 »."""
+    text = _TIME_RE.sub(" ", text)
+    found = set()
+    for match in _NUMBER_RE.finditer(text):
+        start = match.start()
+        negative = (start >= 1 and text[start - 1] in _SIGNS
+                    and (start == 1 or text[start - 2] in " \n\t(«:"))
+        value = _number(match.group())
+        found.add(-value if negative else value)
+    return found
+
+
+def _changes(text: str) -> set[tuple[float, float]]:
+    return {(_number(a), _number(b)) for a, b in _CHANGE_RE.findall(text)}
 
 
 def unknown_facts(reference: str, rewritten: str) -> list[str]:
-    """Chiffres et minutes de `rewritten` qui n'existent pas dans `reference`."""
-    ref_times, ref_numbers = _facts(reference)
-    new_times, new_numbers = _facts(rewritten)
-    unknown = sorted(new_times - ref_times)
-    unknown += [f"{n:g}" for n in sorted(new_numbers - ref_numbers - FREE_NUMBERS)]
+    """Ce que `rewritten` affirme en chiffres et qui n'existe pas dans `reference`."""
+    unknown = sorted(set(_TIME_RE.findall(rewritten)) - set(_TIME_RE.findall(reference)))
+    new_numbers = _numbers(rewritten) - _numbers(reference) - FREE_NUMBERS
+    unknown += [f"{n:g}" for n in sorted(new_numbers)]
+    unknown += [f"« {group} »" for group in _GROUPED_RE.findall(_TIME_RE.sub(" ", rewritten))
+                if group not in reference]
+    unknown += [f"de {a:g} % à {b:g} %"
+                for a, b in sorted(_changes(rewritten) - _changes(reference))]
     return unknown
 
 
@@ -202,6 +237,9 @@ def rewrite(reference: str, provider: Provider | None) -> Rewrite:
     except LLMError as exc:
         log.warning("Réécriture abandonnée (%s) : %s", provider.name, exc)
         return Rewrite(reference, False, str(exc))
+    except Exception as exc:  # noqa: BLE001 - garantie : aucune panne du modèle ne remonte
+        log.warning("Réécriture abandonnée (%s) : %r", provider.name, exc)
+        return Rewrite(reference, False, f"erreur inattendue du modèle ({type(exc).__name__})")
 
     if not MIN_REWRITE_CHARS <= len(text) <= MAX_REWRITE_CHARS:
         reason = "réponse vide ou trop longue"

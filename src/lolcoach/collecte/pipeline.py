@@ -1,4 +1,11 @@
-"""Étapes de collecte : trouver des joueurs, puis récupérer leurs parties et leurs timelines."""
+"""Étapes de collecte : trouver des joueurs, puis récupérer leurs parties et leurs timelines.
+
+Deux garanties :
+- aucune partie n'est perdue en silence : un téléchargement qui échoue est noté, puis retenté
+  aux collectes suivantes ;
+- l'archive est écrite AVANT la base : si le programme est interrompu entre les deux, la
+  partie est simplement retéléchargée, jamais « connue de la base mais absente de l'archive ».
+"""
 
 from __future__ import annotations
 
@@ -7,12 +14,20 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import Engine
+from sqlalchemy.exc import IntegrityError
 
 from lolcoach import db
 from lolcoach.archive import RawArchive
 from lolcoach.collecte.parse import parse_match
 from lolcoach.collecte.timeline import parse_timeline
-from lolcoach.riot import RANKED_SOLO_QUEUE, RiotAuthError, RiotClient, RiotError, RiotNotFound
+from lolcoach.riot import (
+    RANKED_SOLO_QUEUE,
+    RiotAuthError,
+    RiotClient,
+    RiotError,
+    RiotNotFound,
+    RiotRefused,
+)
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +38,7 @@ DIVISIONS = ("I", "II", "III", "IV")
 # redemande donc toujours un peu avant la date de la dernière collecte.
 REFRESH_OVERLAP_S = 2 * 3600
 MAX_CONSECUTIVE_ERRORS = 5
+MAX_PENDING_ATTEMPTS = 5  # au-delà, une partie qui échoue toujours n'est plus retentée
 ARCHIVE_META_KEY = "_lolcoach"
 
 SAVED, KNOWN, REJECTED = "saved", "known", "rejected"
@@ -39,12 +55,62 @@ class CollectStats:
     errors: int = 0
 
 
+@dataclass
+class _Prepared:
+    """Une partie analysée, prête à être enregistrée."""
+
+    match_row: dict[str, Any]
+    rows: list[dict[str, Any]]
+    frames: list[dict[str, Any]] | None
+    events: list[dict[str, Any]] | None
+
+
 def parse_riot_id(riot_id: str) -> tuple[str, str]:
     game_name, sep, tag_line = riot_id.strip().rpartition("#")
     game_name, tag_line = game_name.strip(), tag_line.strip()
-    if not sep or not (1 <= len(game_name) <= 32) or not (1 <= len(tag_line) <= 16):
+    valid = sep and 1 <= len(game_name) <= 32 and 1 <= len(tag_line) <= 16
+    # Un nom fait seulement de points (« .. ») serait lu comme un chemin par le client HTTP.
+    if not valid or set(game_name) <= {"."} or set(tag_line) <= {"."}:
         raise ValueError(f"Riot ID invalide : {riot_id!r} (format attendu : Pseudo#TAG)")
     return game_name, tag_line
+
+
+def _prepare(match_dto: dict[str, Any], timeline_dto: dict[str, Any] | None,
+             tier: str | None) -> _Prepared | None:
+    parsed = parse_match(match_dto)
+    if parsed is None:
+        return None
+    match_row, rows = parsed
+    match_row["tier"] = tier
+    frames = events = None
+    if timeline_dto is not None:
+        team_of = {row["participant_id"]: row["team_id"] for row in rows}
+        puuid_of = {row["participant_id"]: row["puuid"] for row in rows}
+        timeline = parse_timeline(timeline_dto, match_row["match_id"], team_of, puuid_of)
+        if timeline is not None:
+            frames, events = timeline
+    return _Prepared(match_row, rows, frames, events)
+
+
+def _save(engine: Engine, prepared: _Prepared, tier: str | None, snowball: bool,
+          replace: bool) -> tuple[str, int, bool]:
+    has_timeline = prepared.frames is not None
+    new_players = 0
+    try:
+        with engine.begin() as conn:
+            saved = db.save_match(conn, prepared.match_row, prepared.rows, prepared.frames,
+                                  prepared.events, replace=replace)
+            if not saved:
+                return KNOWN, 0, has_timeline
+            if snowball:
+                for row in prepared.rows:
+                    if db.add_player(conn, row["puuid"], tier, None):
+                        new_players += 1
+            db.remove_pending(conn, prepared.match_row["match_id"])
+    except IntegrityError:
+        # Une autre collecte (ou l'API) a enregistré la même partie au même instant.
+        return KNOWN, 0, has_timeline
+    return SAVED, new_players, has_timeline
 
 
 def store_match(
@@ -56,29 +122,10 @@ def store_match(
     replace: bool = False,
 ) -> tuple[str, int, bool]:
     """Analyse et enregistre une partie. Renvoie (résultat, nouveaux joueurs, timeline présente)."""
-    parsed = parse_match(match_dto)
-    if parsed is None:
+    prepared = _prepare(match_dto, timeline_dto, tier)
+    if prepared is None:
         return REJECTED, 0, False
-    match_row, rows = parsed
-    match_row["tier"] = tier
-
-    frames = events = None
-    if timeline_dto is not None:
-        team_of = {row["participant_id"]: row["team_id"] for row in rows}
-        puuid_of = {row["participant_id"]: row["puuid"] for row in rows}
-        timeline = parse_timeline(timeline_dto, match_row["match_id"], team_of, puuid_of)
-        if timeline is not None:
-            frames, events = timeline
-
-    new_players = 0
-    with engine.begin() as conn:
-        if not db.save_match(conn, match_row, rows, frames, events, replace=replace):
-            return KNOWN, 0, frames is not None
-        if snowball:
-            for row in rows:
-                if db.add_player(conn, row["puuid"], tier, None):
-                    new_players += 1
-    return SAVED, new_players, frames is not None
+    return _save(engine, prepared, tier, snowball, replace)
 
 
 def fetch_and_store(
@@ -99,14 +146,29 @@ def fetch_and_store(
     except RiotNotFound:
         timeline_dto = None
 
-    outcome = store_match(engine, match_dto, timeline_dto, tier, snowball, replace)
-    if outcome[0] == SAVED and archive is not None:
-        info = match_dto.get("info", {})
-        patch = ".".join(str(info.get("gameVersion", "")).split(".")[:2])
+    prepared = _prepare(match_dto, timeline_dto, tier)
+    if prepared is None:
+        return REJECTED, 0, False
+    if archive is not None:
+        # Archive d'abord, base ensuite (voir en tête de fichier).
+        patch = prepared.match_row["patch"]
         archive.save(patch, match_id, "match", {**match_dto, ARCHIVE_META_KEY: {"tier": tier}})
         if timeline_dto is not None:
             archive.save(patch, match_id, "timeline", timeline_dto)
-    return outcome
+    return _save(engine, prepared, tier, snowball, replace)
+
+
+def _count(stats: CollectStats, outcome: tuple[str, int, bool]) -> None:
+    result, new_players, has_timeline = outcome
+    if result == SAVED:
+        stats.saved += 1
+        stats.new_players += new_players
+        if not has_timeline:
+            stats.without_timeline += 1
+    elif result == KNOWN:
+        stats.already_known += 1
+    else:
+        stats.rejected += 1
 
 
 def _collect_ids(
@@ -127,28 +189,46 @@ def _collect_ids(
             stats.already_known += 1
             continue
         try:
-            outcome, new_players, has_timeline = fetch_and_store(
-                client, engine, archive, match_id, tier, snowball, replace
-            )
+            outcome = fetch_and_store(client, engine, archive, match_id, tier, snowball, replace)
         except RiotAuthError:
             raise  # clé expirée : inutile de continuer
         except (RiotError, ValueError) as exc:
             stats.errors += 1
             consecutive_errors += 1
-            log.warning("Partie %s ignorée : %s", match_id, exc)
+            log.warning("Partie %s remise à plus tard : %s", match_id, exc)
+            with engine.begin() as conn:
+                db.add_pending(conn, match_id, tier)  # retentée à la prochaine collecte
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                 raise RiotError("Trop d'erreurs à la suite : collecte interrompue.") from exc
             continue
         consecutive_errors = 0
-        if outcome == SAVED:
-            stats.saved += 1
-            stats.new_players += new_players
-            if not has_timeline:
-                stats.without_timeline += 1
-        elif outcome == KNOWN:
-            stats.already_known += 1
-        else:
-            stats.rejected += 1
+        _count(stats, outcome)
+
+
+def retry_pending(client: RiotClient, engine: Engine, archive: RawArchive | None,
+                  stats: CollectStats) -> None:
+    """Retente les parties dont le téléchargement avait échoué lors d'une collecte précédente."""
+    with engine.connect() as conn:
+        pending = db.pending_to_retry(conn, MAX_PENDING_ATTEMPTS)
+    consecutive_errors = 0
+    for match_id, tier in pending:
+        try:
+            outcome = fetch_and_store(client, engine, archive, match_id, tier)
+        except RiotAuthError:
+            raise
+        except (RiotError, ValueError) as exc:
+            stats.errors += 1
+            consecutive_errors += 1
+            log.warning("Partie %s toujours indisponible : %s", match_id, exc)
+            with engine.begin() as conn:
+                db.pending_failed(conn, match_id)
+            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                return  # Riot est en panne : inutile d'insister, la collecte suivante reprendra
+            continue
+        consecutive_errors = 0
+        with engine.begin() as conn:
+            db.remove_pending(conn, match_id)
+        _count(stats, outcome)
 
 
 def fetch_rank(client: RiotClient, puuid: str) -> tuple[str | None, str | None]:
@@ -169,7 +249,9 @@ def sync_player(
 ) -> tuple[str, CollectStats]:
     """Met à jour un joueur précis : son rang et ses `count` dernières parties classées."""
     game_name, tag_line = parse_riot_id(riot_id)
-    puuid = str(client.account_by_riot_id(game_name, tag_line)["puuid"])
+    puuid = client.account_by_riot_id(game_name, tag_line).get("puuid")
+    if not isinstance(puuid, str) or not puuid:
+        raise RiotError("Réponse de l'API Riot inattendue : compte sans identifiant.")
     tier, division = fetch_rank(client, puuid)
     with engine.begin() as conn:
         db.set_player_rank(conn, puuid, tier, division)
@@ -217,11 +299,14 @@ def collect_matches(
     la collecte (Ctrl+C) sans rien perdre.
     Avec `snowball`, les 9 autres joueurs de chaque partie sont ajoutés à la file.
     Avec `refresh_after_s`, les joueurs déjà traités depuis plus longtemps sont repris.
+    Un joueur que Riot refuse ou qui échoue n'arrête pas la collecte des autres.
     """
     stats = CollectStats()
+    retry_pending(client, engine, archive, stats)
     with engine.connect() as conn:
         queue = db.players_to_fetch(conn, max_players, refresh_after_s)
 
+    failed_players = 0
     for puuid, tier, last_fetched_at in queue:
         stats.players += 1
         start_time = last_fetched_at - REFRESH_OVERLAP_S if last_fetched_at else None
@@ -229,6 +314,25 @@ def collect_matches(
             match_ids = client.match_ids(puuid, count=matches_per_player, start_time=start_time)
         except RiotNotFound:
             match_ids = []
+        except RiotAuthError:
+            raise
+        except RiotRefused as exc:
+            # Refus définitif pour ce joueur (identifiant d'une autre clé, par exemple) :
+            # on le marque traité, sinon il bloquerait la file à chaque collecte.
+            log.warning("Joueur refusé par Riot, ignoré : %s", exc)
+            stats.errors += 1
+            with engine.begin() as conn:
+                db.mark_player_fetched(conn, puuid)
+            continue
+        except RiotError as exc:
+            # Panne passagère : le joueur reste en file pour la prochaine collecte.
+            log.warning("Joueur remis à plus tard : %s", exc)
+            stats.errors += 1
+            failed_players += 1
+            if failed_players >= MAX_CONSECUTIVE_ERRORS:
+                raise RiotError("Trop d'erreurs à la suite : collecte interrompue.") from exc
+            continue
+        failed_players = 0
         _collect_ids(client, engine, archive, match_ids, tier, stats, snowball)
         with engine.begin() as conn:
             db.mark_player_fetched(conn, puuid)
@@ -254,11 +358,5 @@ def reimport(engine: Engine, archive: RawArchive) -> CollectStats:
     stats = CollectStats()
     for match_dto, timeline_dto in archive.iter_matches():
         tier = (match_dto.get(ARCHIVE_META_KEY) or {}).get("tier")
-        outcome, _, has_timeline = store_match(engine, match_dto, timeline_dto, tier, replace=True)
-        if outcome == SAVED:
-            stats.saved += 1
-            if not has_timeline:
-                stats.without_timeline += 1
-        else:
-            stats.rejected += 1
+        _count(stats, store_match(engine, match_dto, timeline_dto, tier, replace=True))
     return stats

@@ -12,6 +12,7 @@ Principes pour durer :
 from __future__ import annotations
 
 import logging
+import math
 import random
 import re
 import threading
@@ -48,6 +49,26 @@ class RiotNotFound(RiotError):
 
 class RiotAuthError(RiotError):
     """Clé refusée (401 / 403) : absente, invalide ou expirée."""
+
+
+class RiotRefused(RiotError):
+    """Requête refusée par Riot (400 et autres 4xx) : la retenter telle quelle ne servirait à rien.
+
+    Cas typique : un identifiant de joueur (puuid) obtenu avec une autre clé. Les puuid sont
+    propres à chaque application Riot ; changer de type de clé les rend invalides.
+    """
+
+
+def path_segment(value: str) -> str:
+    """Encode une valeur pour l'insérer dans un chemin d'URL, sans qu'elle puisse le modifier.
+
+    « .. » et « . » sont refusés : le client HTTP les interpréterait comme des remontées
+    de dossier, et la requête partirait vers une autre adresse de l'API.
+    """
+    encoded = quote(value, safe="")
+    if encoded in ("", ".", ".."):
+        raise ValueError("valeur invalide dans une adresse")
+    return encoded
 
 
 def validate_puuid(puuid: str) -> str:
@@ -161,9 +182,11 @@ class RiotClient:
     def _backoff(self, attempt: int, retry_after: str | None = None) -> float:
         if retry_after:
             try:
-                return min(max(float(retry_after), 0.0), MAX_RETRY_WAIT_S)
+                wait = float(retry_after)
             except ValueError:
-                pass
+                wait = math.nan
+            if math.isfinite(wait):
+                return min(max(wait, 0.0), MAX_RETRY_WAIT_S)
         # Attente exponentielle avec part d'aléatoire, pour ne pas retenter tous en même temps.
         return min(2.0**attempt + random.uniform(0.0, 1.0), MAX_RETRY_WAIT_S)
 
@@ -187,7 +210,7 @@ class RiotClient:
             self._limiter.acquire()
             try:
                 resp = self._http.get(url, headers=self._headers, params=params)
-            except httpx.TransportError as exc:
+            except httpx.HTTPError as exc:  # réseau coupé, délai dépassé, réponse mal encodée…
                 if last_attempt:
                     raise RiotError(f"API Riot injoignable : {type(exc).__name__}") from exc
                 self._sleep(self._backoff(attempt))
@@ -212,10 +235,10 @@ class RiotClient:
                 self._sleep(wait)
                 continue
             if status >= 400:
-                raise RiotError(f"L'API Riot a refusé la requête ({status}).")
+                raise RiotRefused(f"L'API Riot a refusé la requête ({status}).")
             try:
                 return resp.json()
-            except ValueError as exc:
+            except (ValueError, httpx.HTTPError) as exc:
                 raise RiotError("Réponse de l'API Riot illisible.") from exc
         raise AssertionError("inatteignable")
 
@@ -237,7 +260,7 @@ class RiotClient:
     def account_by_riot_id(self, game_name: str, tag_line: str) -> dict[str, Any]:
         path = (
             "/riot/account/v1/accounts/by-riot-id/"
-            f"{quote(game_name, safe='')}/{quote(tag_line, safe='')}"
+            f"{path_segment(game_name)}/{path_segment(tag_line)}"
         )
         return self._get_dict("account.by-riot-id", self._region_url + path)
 
@@ -277,7 +300,10 @@ class RiotClient:
         page: int = 1,
         queue: str = RANKED_SOLO_QUEUE,
     ) -> list[dict[str, Any]]:
-        path = f"/lol/league/v4/entries/{quote(queue)}/{quote(tier)}/{quote(division)}"
+        path = (
+            f"/lol/league/v4/entries/{path_segment(queue)}/{path_segment(tier)}/"
+            f"{path_segment(division)}"
+        )
         entries = self._get_list("league.entries", self._platform_url + path, {"page": page})
         return [entry for entry in entries if isinstance(entry, dict)]
 

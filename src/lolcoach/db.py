@@ -157,6 +157,16 @@ events = Table(
     Column("value", Integer, nullable=True),  # or rapporté par un kill
 )
 
+# Parties dont le téléchargement a échoué (panne passagère) : retentées à la collecte suivante,
+# pour qu'aucune partie ne soit perdue en silence.
+pending_matches = Table(
+    "pending_matches",
+    metadata,
+    Column("match_id", String(32), primary_key=True),
+    Column("tier", String(16), nullable=True),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+)
+
 goals = Table(
     "goals",
     metadata,
@@ -355,6 +365,39 @@ def delete_match(conn: Connection, match_id: str) -> None:
     for table in (events, participant_frames, participants):
         conn.execute(delete(table).where(table.c.match_id == match_id))
     conn.execute(delete(matches).where(matches.c.match_id == match_id))
+
+
+def add_pending(conn: Connection, match_id: str, tier: str | None) -> None:
+    """Note une partie à retenter. Sans effet si elle est déjà notée."""
+    known = conn.execute(
+        select(pending_matches.c.match_id).where(pending_matches.c.match_id == match_id)
+    ).first()
+    if known is None:
+        conn.execute(pending_matches.insert(), [{"match_id": match_id, "tier": tier,
+                                                 "attempts": 0}])
+
+
+def pending_to_retry(conn: Connection, max_attempts: int, limit: int = 500
+                     ) -> list[tuple[str, str | None]]:
+    query = (
+        select(pending_matches.c.match_id, pending_matches.c.tier)
+        .where(pending_matches.c.attempts < max_attempts)
+        .order_by(pending_matches.c.attempts, pending_matches.c.match_id)
+        .limit(limit)
+    )
+    return [(r.match_id, r.tier) for r in conn.execute(query)]
+
+
+def pending_failed(conn: Connection, match_id: str) -> None:
+    conn.execute(
+        pending_matches.update()
+        .where(pending_matches.c.match_id == match_id)
+        .values(attempts=pending_matches.c.attempts + 1)
+    )
+
+
+def remove_pending(conn: Connection, match_id: str) -> None:
+    conn.execute(delete(pending_matches).where(pending_matches.c.match_id == match_id))
 
 
 def matches_without_timeline(conn: Connection, limit: int) -> list[tuple[str, str | None]]:

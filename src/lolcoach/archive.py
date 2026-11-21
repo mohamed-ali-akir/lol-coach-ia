@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import tempfile
+import zlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -70,7 +71,7 @@ class RawArchive:
             try:
                 match = _read(match_path)
                 timeline = _read(timeline_path) if timeline_path.exists() else None
-            except (OSError, EOFError, ValueError) as exc:
+            except (OSError, EOFError, ValueError, zlib.error) as exc:
                 # Un fichier abîmé ne doit pas empêcher de relire tous les autres.
                 log.warning("Archive illisible, ignorée : %s (%s)", match_path.name, exc)
                 continue
