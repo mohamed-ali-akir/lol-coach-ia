@@ -104,7 +104,8 @@ def match_states(match: MatchData) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _bucket(minutes: np.ndarray) -> np.ndarray:
-    return np.minimum(minutes, LAST_BUCKET_START) // BUCKET_MIN
+    result: np.ndarray = np.minimum(minutes, LAST_BUCKET_START) // BUCKET_MIN
+    return result
 
 
 @dataclass
@@ -119,17 +120,19 @@ class WinProbModel:
     def predict(self, ts_ms: np.ndarray, x: np.ndarray) -> np.ndarray:
         """Probabilité de victoire des bleus pour chaque état."""
         minutes = np.asarray(ts_ms, dtype=float) / MINUTE_MS
-        probas = np.stack([m.predict_proba(x) for m in self.models])
+        probas: np.ndarray = np.stack([m.predict_proba(x) for m in self.models])
         centers = np.asarray(self.centers_min)
         if len(centers) == 1:
-            return probas[0]
+            single: np.ndarray = probas[0]
+            return single
         # Mélange progressif entre les deux tranches voisines.
         position = np.interp(minutes, centers, np.arange(len(centers)))
         low = np.floor(position).astype(int)
         high = np.minimum(low + 1, len(centers) - 1)
         share = position - low
         rows = np.arange(len(minutes))
-        return (1 - share) * probas[low, rows] + share * probas[high, rows]
+        blended: np.ndarray = (1 - share) * probas[low, rows] + share * probas[high, rows]
+        return blended
 
     def curve(self, match: MatchData) -> np.ndarray:
         """Probabilité de victoire des bleus à chaque photo de la partie."""

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pytest
+from sqlalchemy import create_engine
 
 from lolcoach import db
 from lolcoach.analyse.benchmarks import Benchmarks
@@ -109,9 +112,51 @@ def make_data(events: list[Event] | None = None, minutes: int = 30,
     )
 
 
+# Par défaut les tests utilisent SQLite. Pour les lancer sur MySQL / MariaDB, donner
+# l'adresse du serveur sans nom de base, par exemple :
+#   LOLCOACH_TEST_DATABASE_URL=mysql+pymysql://utilisateur:motdepasse@localhost/
+# Chaque base de test est alors créée sous un nom unique « lolcoach_test_… » puis supprimée.
+SERVER_URL = os.environ.get("LOLCOACH_TEST_DATABASE_URL", "").rstrip("/")
+
+
+class EngineFactory:
+    """Crée des bases de test vides et migrées, et les supprime à la fin."""
+
+    def __init__(self, folder):
+        self._folder = folder
+        self._created: list[tuple[Any, str | None]] = []
+
+    def __call__(self, name: str = "test"):
+        if SERVER_URL:
+            database = f"lolcoach_test_{uuid.uuid4().hex[:12]}"
+            with create_engine(SERVER_URL + "/").connect() as conn:
+                conn.exec_driver_sql(f"CREATE DATABASE {database} CHARACTER SET utf8mb4")
+            engine = init_db(f"{SERVER_URL}/{database}")
+            self._created.append((engine, database))
+        else:
+            engine = init_db(f"sqlite:///{self._folder / f'{name}-{len(self._created)}.db'}")
+            self._created.append((engine, None))
+        return engine
+
+    def cleanup(self) -> None:
+        for engine, database in self._created:
+            engine.dispose()
+            if database:
+                with create_engine(SERVER_URL + "/").connect() as conn:
+                    conn.exec_driver_sql(f"DROP DATABASE IF EXISTS {database}")
+
+
 @pytest.fixture
-def engine(tmp_path):
-    return init_db(f"sqlite:///{tmp_path / 'test.db'}")
+def new_engine(tmp_path):
+    """Fabrique de bases de test : `new_engine()` rend une base vide et migrée."""
+    factory = EngineFactory(tmp_path)
+    yield factory
+    factory.cleanup()
+
+
+@pytest.fixture
+def engine(new_engine):
+    return new_engine()
 
 
 @dataclass
@@ -128,11 +173,13 @@ def demo(tmp_path_factory) -> Demo:
     """Base de démonstration partagée par les tests : 300 parties simulées, dont 30 du
     joueur fictif, et les modèles entraînés dessus. En lecture seule."""
     folder = tmp_path_factory.mktemp("demo")
-    engine = init_db(f"sqlite:///{folder / 'demo.db'}")
+    factory = EngineFactory(folder)
+    engine = factory("demo")
     fill_demo_database(engine, n_matches=300, seed=7)
     benchmarks = training.train_benchmarks(engine, None)
     winprob = training.train_winprob_from_db(engine, None, 0.2)
     benchmarks.save(folder / training.BENCHMARKS_FILE)
     winprob.save(folder / training.WINPROB_FILE)
     training.train_draft(engine, None, 0.2).save(folder / training.DRAFT_FILE)
-    return Demo(engine, DEMO_PUUID, benchmarks, winprob, folder)
+    yield Demo(engine, DEMO_PUUID, benchmarks, winprob, folder)
+    factory.cleanup()

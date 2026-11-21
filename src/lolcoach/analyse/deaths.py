@@ -14,7 +14,6 @@ Coût : variation de la probabilité de victoire de l'équipe autour de la mort 
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -112,23 +111,15 @@ def clock(ts_ms: int) -> str:
 
 def _allies_nearby(match: MatchData, pid: int, ts: int, x: int | None, y: int | None
                    ) -> int | None:
-    if not match.has_timeline:
+    positions = match.positions_at(ts)
+    if positions is None:
         return None
+    xs, ys = positions
     if x is None or y is None:
-        own = match.position_at(pid, ts)
-        if own is None:
-            return None
-        x, y = int(own[0]), int(own[1])
-    count = 0
-    for ally in match.members(match.team(pid)):
-        if ally == pid:
-            continue
-        position = match.position_at(ally, ts)
-        if position is None:
-            return None
-        if math.hypot(position[0] - x, position[1] - y) <= NEARBY_RADIUS:
-            count += 1
-    return count
+        x, y = int(xs[pid]), int(ys[pid])
+    allies = [ally for ally in match.members(match.team(pid)) if ally != pid]
+    distance = np.hypot(xs[allies] - x, ys[allies] - y)
+    return int(np.count_nonzero(distance <= NEARBY_RADIUS))
 
 
 def _objective_lost(match: MatchData, enemy_team: int, ts: int) -> str | None:

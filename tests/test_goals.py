@@ -12,9 +12,9 @@ from lolcoach.demo import DEMO_PUUID, fill_demo_database
 
 
 @pytest.fixture
-def small(tmp_path):
+def small(new_engine):
     """Petite base modifiable : 100 parties, dont 10 du joueur fictif."""
-    engine = db.init_db(f"sqlite:///{tmp_path / 'objectifs.db'}")
+    engine = new_engine()
     fill_demo_database(engine, n_matches=100, seed=3)
     games = sorted(player_games(engine, DEMO_PUUID, 50), key=lambda game: game.game_creation)
     return engine, games
@@ -120,8 +120,8 @@ def test_drop_goal(small):
     g.create_goal(engine, DEMO_PUUID, "cs_per_min", "MIDDLE", 4, 5)  # on peut le reprendre
 
 
-def test_service_creates_goal_from_current_level(tmp_path, demo):
-    engine = db.init_db(f"sqlite:///{tmp_path / 'service.db'}")
+def test_service_creates_goal_from_current_level(new_engine, demo):
+    engine = new_engine()
     fill_demo_database(engine, n_matches=100, seed=3)
     coach = Coach(engine, demo.models_dir)
 

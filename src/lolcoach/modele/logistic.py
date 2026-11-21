@@ -30,7 +30,8 @@ class ArtifactError(Exception):
 
 
 def sigmoid(z: np.ndarray) -> np.ndarray:
-    return 1.0 / (1.0 + np.exp(-np.clip(z, -35.0, 35.0)))
+    result: np.ndarray = 1.0 / (1.0 + np.exp(-np.clip(z, -35.0, 35.0)))
+    return result
 
 
 @dataclass

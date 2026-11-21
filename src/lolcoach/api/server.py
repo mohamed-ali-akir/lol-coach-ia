@@ -18,13 +18,14 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
+from sqlalchemy import Engine
 
 from lolcoach.api.app import SyncFunction, create_app
 from lolcoach.archive import RawArchive
 from lolcoach.coach.llm import LLMError, provider_from_env
 from lolcoach.coach.service import Coach
 from lolcoach.collecte import pipeline
-from lolcoach.config import ConfigError, load_config, models_dir
+from lolcoach.config import Config, ConfigError, load_config, models_dir
 from lolcoach.db import init_db
 from lolcoach.riot import RiotClient
 
@@ -56,13 +57,13 @@ def load_or_create_token(path: Path) -> str:
     return token
 
 
-def build_sync(config, engine) -> SyncFunction | None:
+def build_sync(config: Config, engine: Engine) -> SyncFunction | None:
     if not config.riot_api_key:
         return None
     client = RiotClient(config.riot_api_key, config.platform, config.region)
     archive = RawArchive(config.archive_dir) if config.archive_dir else None
 
-    def sync(riot_id: str, count: int):
+    def sync(riot_id: str, count: int) -> tuple[str, pipeline.CollectStats]:
         return pipeline.sync_player(client, engine, archive, riot_id, count)
 
     return sync

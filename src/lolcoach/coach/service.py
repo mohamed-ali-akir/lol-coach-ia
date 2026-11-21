@@ -19,6 +19,7 @@ from lolcoach.analyse.benchmarks import Benchmarks
 from lolcoach.analyse.data import recent_match_ids
 from lolcoach.analyse.deaths import clock
 from lolcoach.analyse.diagnostic import Diagnostic, DiagnosticError, build_diagnostic
+from lolcoach.analyse.metrics import METRICS_BY_KEY
 from lolcoach.analyse.report import MatchReport, ReportError, build_report
 from lolcoach.coach import goals as goals_module
 from lolcoach.coach.goals import GoalError, GoalProgress, Proposal
@@ -205,7 +206,7 @@ class Coach:
             if proposal is None:
                 raise GoalError("Pas de cible proposée pour cette statistique : précise-la.")
             target = proposal.target
-        decimals = goals_module.METRICS_BY_KEY[metric].decimals
+        decimals = METRICS_BY_KEY[metric].decimals
         return goals_module.create_goal(self.engine, puuid, metric, diagnostic.role,
                                         round(finding.value, decimals), target, window_games)
 

@@ -18,9 +18,10 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    ColumnElement,
     Connection,
+    Double,
     Engine,
-    Float,
     ForeignKey,
     Index,
     Integer,
@@ -163,13 +164,13 @@ goals = Table(
     Column("puuid", String(78), nullable=False, index=True),
     Column("metric", String(32), nullable=False),
     Column("role", String(16), nullable=False),
-    Column("baseline", Float, nullable=False),
-    Column("target", Float, nullable=False),
+    Column("baseline", Double, nullable=False),
+    Column("target", Double, nullable=False),
     Column("window_games", Integer, nullable=False),
     Column("created_at", BigInteger, nullable=False),  # secondes depuis 1970
     Column("status", String(12), nullable=False),
     Column("closed_at", BigInteger, nullable=True),
-    Column("final_value", Float, nullable=True),
+    Column("final_value", Double, nullable=True),
 )
 
 
@@ -285,7 +286,7 @@ def players_to_fetch(
     D'abord ceux jamais collectés ; avec `refresh_after_s`, aussi ceux dont la dernière
     collecte est plus ancienne que ce délai.
     """
-    condition = players.c.last_fetched_at.is_(None)
+    condition: ColumnElement[bool] = players.c.last_fetched_at.is_(None)
     if refresh_after_s is not None:
         cutoff = int(time.time()) - refresh_after_s
         condition = or_(condition, players.c.last_fetched_at < cutoff)

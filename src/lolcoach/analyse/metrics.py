@@ -59,7 +59,7 @@ def _team_total(match: MatchData, pid: int, column: str) -> float:
 
 
 def _cs_per_min(match: MatchData, pid: int) -> float | None:
-    return _player(match, pid)["cs"] / match.minutes
+    return float(_player(match, pid)["cs"]) / match.minutes
 
 
 def _cs_at_10(match: MatchData, pid: int) -> float | None:
@@ -78,7 +78,7 @@ def _diff_at_15(series_name: str) -> Compute:
 
 
 def _deaths_per_10(match: MatchData, pid: int) -> float | None:
-    return _player(match, pid)["deaths"] / match.minutes * 10
+    return float(_player(match, pid)["deaths"]) / match.minutes * 10
 
 
 def _early_deaths(match: MatchData, pid: int) -> float | None:
@@ -104,16 +104,18 @@ def _kill_participation(match: MatchData, pid: int) -> float | None:
     if team_kills == 0:
         return None
     me = _player(match, pid)
-    return min(100.0, (me["kills"] + me["assists"]) / team_kills * 100)
+    return min(100.0, float(me["kills"] + me["assists"]) / team_kills * 100)
 
 
 def _damage_share(match: MatchData, pid: int) -> float | None:
     total = _team_total(match, pid, "damage_to_champions")
-    return None if total == 0 else _player(match, pid)["damage_to_champions"] / total * 100
+    if total == 0:
+        return None
+    return float(_player(match, pid)["damage_to_champions"]) / total * 100
 
 
 def _vision_per_min(match: MatchData, pid: int) -> float | None:
-    return _player(match, pid)["vision_score"] / match.minutes
+    return float(_player(match, pid)["vision_score"]) / match.minutes
 
 
 def _control_wards(match: MatchData, pid: int) -> float | None:

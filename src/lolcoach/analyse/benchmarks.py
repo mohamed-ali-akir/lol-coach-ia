@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
 
@@ -58,14 +59,21 @@ def _percentile(grid: np.ndarray, value: float) -> float:
     return float((QUANTILES[left] + QUANTILES[right - 1]) / 2)
 
 
+class Group(TypedDict):
+    """Repères d'un groupe (rang, rôle, résultat) : pour chaque statistique, ses quantiles."""
+
+    n: int
+    metrics: dict[str, list[float]]
+
+
 @dataclass
 class Benchmarks:
-    groups: dict[str, dict[str, object]] = field(default_factory=dict)
+    groups: dict[str, Group] = field(default_factory=dict)
     importance: dict[str, dict[str, float]] = field(default_factory=dict)
     n_games: int = 0
     trained_at: str = ""
 
-    def _group(self, tier: str | None, role: str, win: bool) -> tuple[str, dict] | None:
+    def _group(self, tier: str | None, role: str, win: bool) -> tuple[str, Group] | None:
         for candidate in (tier, ALL_TIERS):
             if candidate and _key(candidate, role, win) in self.groups:
                 return candidate, self.groups[_key(candidate, role, win)]
@@ -112,7 +120,7 @@ class Benchmarks:
         try:
             if [float(q) for q in data["quantiles"]] != [float(q) for q in QUANTILES]:
                 raise ValueError("grille de quantiles différente")
-            groups = {}
+            groups: dict[str, Group] = {}
             for key, group in data["groups"].items():
                 metrics = {str(m): [float(v) for v in grid]
                            for m, grid in group["metrics"].items() if m in METRICS_BY_KEY}
@@ -182,7 +190,7 @@ def build_benchmarks(games: Iterable[GameMetrics]) -> Benchmarks:
                 if value is not None and np.isfinite(value):
                     bucket.setdefault(metric, []).append(float(value))
 
-    groups: dict[str, dict[str, object]] = {}
+    groups: dict[str, Group] = {}
     for key, bucket in values.items():
         needed = MIN_ANY if key.startswith(ALL_TIERS + "|") else MIN_GROUP
         if counts[key] < needed:

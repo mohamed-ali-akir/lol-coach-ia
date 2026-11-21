@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
 import os
 import re
 import tempfile
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from lolcoach.riot import validate_match_id
+
+log = logging.getLogger(__name__)
 
 PATCH_RE = re.compile(r"^\d{1,3}\.\d{1,3}$")
 KINDS = ("match", "timeline")
@@ -64,9 +67,19 @@ class RawArchive:
             timeline_path = match_path.with_name(
                 match_path.name.replace(".match.json.gz", ".timeline.json.gz")
             )
-            yield _read(match_path), _read(timeline_path) if timeline_path.exists() else None
+            try:
+                match = _read(match_path)
+                timeline = _read(timeline_path) if timeline_path.exists() else None
+            except (OSError, EOFError, ValueError) as exc:
+                # Un fichier abîmé ne doit pas empêcher de relire tous les autres.
+                log.warning("Archive illisible, ignorée : %s (%s)", match_path.name, exc)
+                continue
+            yield match, timeline
 
 
 def _read(path: Path) -> dict[str, Any]:
     with gzip.open(path, "rb") as handle:
-        return json.loads(handle.read().decode("utf-8"))
+        payload = json.loads(handle.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} : contenu inattendu")
+    return payload

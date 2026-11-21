@@ -96,7 +96,7 @@ def test_client_routes_and_params():
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.url)
-        return httpx.Response(200, json=[])
+        return httpx.Response(200, json={} if request.url.path.endswith("/timeline") else [])
 
     client = make_client(handler)
     client.match_ids(PUUID, count=500, start_time=1234)
@@ -199,3 +199,14 @@ def test_client_learns_app_and_method_limits_from_headers():
     assert client._limiter._limits == [(500, 10.0), (30000, 600.0)]
     assert client._method_limiters["match.by-id"]._limits == [(2000, 10.0)]
     assert "match.timeline" not in client._method_limiters
+
+
+def test_unexpected_response_shape_is_a_riot_error():
+    as_list = make_client(lambda request: httpx.Response(200, json=["pas", "un", "objet"]))
+    with pytest.raises(RiotError, match="objet attendu"):
+        as_list.match("EUW1_1")
+    as_dict = make_client(lambda request: httpx.Response(200, json={"status": "erreur"}))
+    with pytest.raises(RiotError, match="liste attendue"):
+        as_dict.match_ids(PUUID)
+    mixed = make_client(lambda request: httpx.Response(200, json=["EUW1_1", 42, None]))
+    assert mixed.match_ids(PUUID) == ["EUW1_1"]  # les éléments inattendus sont écartés

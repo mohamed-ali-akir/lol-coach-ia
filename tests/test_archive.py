@@ -40,3 +40,14 @@ def test_unknown_patch_and_kind(tmp_path):
 
 def test_empty_archive(tmp_path):
     assert list(RawArchive(tmp_path / "absent").iter_matches()) == []
+
+
+def test_damaged_file_is_skipped_not_fatal(tmp_path):
+    archive = RawArchive(tmp_path)
+    archive.save("16.1", "EUW1_1", "match", {"n": 1})
+    damaged = archive.save("16.1", "EUW1_2", "match", {"n": 2})
+    damaged.write_bytes(b"pas du gzip")
+    archive.save("16.1", "EUW1_3", "match", {"n": 3})
+    (tmp_path / "16.1" / "EUW1_4.match.json.gz").write_bytes(
+        __import__("gzip").compress(b'["une liste"]'))
+    assert [match["n"] for match, _ in archive.iter_matches()] == [1, 3]

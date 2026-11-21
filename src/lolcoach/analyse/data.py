@@ -52,6 +52,7 @@ class MatchData:
     x: np.ndarray = field(default_factory=lambda: np.zeros((0, 11)))
     y: np.ndarray = field(default_factory=lambda: np.zeros((0, 11)))
     events: list[Event] = field(default_factory=list)
+    _kills: list[Event] | None = field(default=None, repr=False, compare=False)
 
     @property
     def has_timeline(self) -> bool:
@@ -94,8 +95,25 @@ class MatchData:
         px, py = self.value_at(self.x, pid, ts), self.value_at(self.y, pid, ts)
         return None if px is None or py is None else (px, py)
 
+    def positions_at(self, ts: int) -> tuple[np.ndarray, np.ndarray] | None:
+        """Position des 10 joueurs à l'instant `ts` : (x, y), indexés par numéro de
+        participant. Un seul calcul d'interpolation pour tout le monde."""
+        frame_ts = self.frame_ts
+        if not self.has_timeline or ts < frame_ts[0] or ts > frame_ts[-1]:
+            return None
+        after = int(np.searchsorted(frame_ts, ts, side="left"))
+        if frame_ts[after] == ts:
+            return self.x[after], self.y[after]
+        before = after - 1
+        share = (ts - frame_ts[before]) / (frame_ts[after] - frame_ts[before])
+        return (self.x[before] + share * (self.x[after] - self.x[before]),
+                self.y[before] + share * (self.y[after] - self.y[before]))
+
     def kills(self) -> list[Event]:
-        return [e for e in self.events if e.type == db.EVENT_KILL]
+        """Les morts de la partie, dans l'ordre (calculées une seule fois)."""
+        if self._kills is None:
+            self._kills = [e for e in self.events if e.type == db.EVENT_KILL]
+        return self._kills
 
 
 def recent_match_ids(conn: Connection, puuid: str, limit: int) -> list[str]:
@@ -167,29 +185,36 @@ def _load_chunk(conn: Connection, match_ids: list[str]) -> dict[str, MatchData]:
         select(frames.c.match_id, frames.c.frame, frames.c.participant_id, frames.c.timestamp_ms,
                frames.c.total_gold, frames.c.xp, frames.c.cs, frames.c.x, frames.c.y)
         .where(frames.c.match_id.in_(match_ids))
-        .order_by(frames.c.match_id, frames.c.frame)
+        .order_by(frames.c.match_id)
     )
-    by_match: dict[str, list[tuple[Any, ...]]] = {}
-    for row in conn.execute(query):
-        by_match.setdefault(row[0], []).append(tuple(row))
-    for match_id, rows in by_match.items():
-        match = result.get(match_id)
-        if match is None:
-            continue
-        n_frames = rows[-1][1] + 1
-        ts = np.zeros(n_frames, dtype=np.int64)
-        series = np.zeros((5, n_frames, 11))
-        for _, frame, pid, timestamp, *values in rows:
-            if 1 <= pid <= 10:
-                ts[frame] = timestamp
-                series[:, frame, pid] = values
-        match.frame_ts = ts
-        match.gold, match.xp, match.cs, match.x, match.y = series
+    rows = conn.execute(query).all()
+    if rows:
+        # Conversion par blocs : c'est le point chaud de tout entraînement.
+        owners = [row[0] for row in rows]
+        numbers = np.array([row[1:] for row in rows], dtype=np.int64)
+        bounds = [0] + [i for i in range(1, len(owners)) if owners[i] != owners[i - 1]]
+        bounds.append(len(owners))
+        for begin, stop in zip(bounds[:-1], bounds[1:], strict=True):
+            match = result.get(owners[begin])
+            if match is None:
+                continue
+            block = numbers[begin:stop]
+            block = block[(block[:, 1] >= 1) & (block[:, 1] <= 10)]
+            if not len(block):
+                continue
+            frame, pid = block[:, 0], block[:, 1]
+            n_frames = int(frame.max()) + 1
+            ts = np.zeros(n_frames, dtype=np.int64)
+            ts[frame] = block[:, 2]
+            series = np.zeros((5, n_frames, 11))
+            series[:, frame, pid] = block[:, 3:].T
+            match.frame_ts = ts
+            match.gold, match.xp, match.cs, match.x, match.y = series
 
     ev = db.events
     query = select(ev).where(ev.c.match_id.in_(match_ids)).order_by(
         ev.c.match_id, ev.c.timestamp_ms, ev.c.seq)
-    for row in conn.execute(query):
+    for row in conn.execute(query).all():
         match = result.get(row.match_id)
         if match is None:
             continue

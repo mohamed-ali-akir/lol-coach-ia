@@ -219,13 +219,27 @@ class RiotClient:
                 raise RiotError("Réponse de l'API Riot illisible.") from exc
         raise AssertionError("inatteignable")
 
+    def _get_dict(self, method: str, url: str, params: dict[str, Any] | None = None
+                  ) -> dict[str, Any]:
+        payload = self._get(method, url, params)
+        if not isinstance(payload, dict):
+            raise RiotError("Réponse de l'API Riot inattendue (objet attendu).")
+        return payload
+
+    def _get_list(self, method: str, url: str, params: dict[str, Any] | None = None
+                  ) -> list[Any]:
+        payload = self._get(method, url, params)
+        if not isinstance(payload, list):
+            raise RiotError("Réponse de l'API Riot inattendue (liste attendue).")
+        return payload
+
     # --- account-v1 (routage régional) ---
     def account_by_riot_id(self, game_name: str, tag_line: str) -> dict[str, Any]:
         path = (
             "/riot/account/v1/accounts/by-riot-id/"
             f"{quote(game_name, safe='')}/{quote(tag_line, safe='')}"
         )
-        return self._get("account.by-riot-id", self._region_url + path)
+        return self._get_dict("account.by-riot-id", self._region_url + path)
 
     # --- match-v5 (routage régional) ---
     def match_ids(
@@ -244,15 +258,16 @@ class RiotClient:
         params: dict[str, Any] = {"queue": queue, "start": start, "count": min(count, 100)}
         if start_time is not None:
             params["startTime"] = start_time
-        return self._get("match.ids", self._region_url + path, params)
+        ids = self._get_list("match.ids", self._region_url + path, params)
+        return [str(match_id) for match_id in ids if isinstance(match_id, str)]
 
     def match(self, match_id: str) -> dict[str, Any]:
         path = f"/lol/match/v5/matches/{validate_match_id(match_id)}"
-        return self._get("match.by-id", self._region_url + path)
+        return self._get_dict("match.by-id", self._region_url + path)
 
     def timeline(self, match_id: str) -> dict[str, Any]:
         path = f"/lol/match/v5/matches/{validate_match_id(match_id)}/timeline"
-        return self._get("match.timeline", self._region_url + path)
+        return self._get_dict("match.timeline", self._region_url + path)
 
     # --- league-v4 (routage plateforme) ---
     def league_entries(
@@ -263,9 +278,11 @@ class RiotClient:
         queue: str = RANKED_SOLO_QUEUE,
     ) -> list[dict[str, Any]]:
         path = f"/lol/league/v4/entries/{quote(queue)}/{quote(tier)}/{quote(division)}"
-        return self._get("league.entries", self._platform_url + path, {"page": page})
+        entries = self._get_list("league.entries", self._platform_url + path, {"page": page})
+        return [entry for entry in entries if isinstance(entry, dict)]
 
     def league_entries_by_puuid(self, puuid: str) -> list[dict[str, Any]]:
         """Classements d'un joueur (une entrée par file classée)."""
         path = f"/lol/league/v4/entries/by-puuid/{validate_puuid(puuid)}"
-        return self._get("league.by-puuid", self._platform_url + path)
+        entries = self._get_list("league.by-puuid", self._platform_url + path)
+        return [entry for entry in entries if isinstance(entry, dict)]

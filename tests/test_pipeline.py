@@ -169,7 +169,7 @@ def test_backfill_replaces_match_without_timeline(engine):
     assert row["duration_s"] == match["info"]["gameDuration"]
 
 
-def test_reimport_rebuilds_database_from_archive(engine, tmp_path):
+def test_reimport_rebuilds_database_from_archive(engine, new_engine, tmp_path):
     riot = riot_with_simulated(2)
     riot.matches_by_player = {"p1": ["SIM1_1", "SIM1_2"]}
     archive = RawArchive(tmp_path / "brut")
@@ -178,7 +178,7 @@ def test_reimport_rebuilds_database_from_archive(engine, tmp_path):
     pipeline.collect_matches(riot, engine, archive)
     before = (count(engine, db.participant_frames), count(engine, db.events))
 
-    fresh = db.init_db(f"sqlite:///{tmp_path / 'neuve.db'}")
+    fresh = new_engine()
     stats = pipeline.reimport(fresh, archive)
 
     assert stats.saved == 2

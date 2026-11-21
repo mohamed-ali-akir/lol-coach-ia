@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol, TypeVar
 
 from sqlalchemy import Engine
 
@@ -29,6 +31,27 @@ from lolcoach.modele.winprob import WinProbModel, train_winprob
 DRAFT_FILE = "draft.json"
 WINPROB_FILE = "victoire.json"
 BENCHMARKS_FILE = "reperes.json"
+
+
+class _Saveable(Protocol):
+    def save(self, path: Path) -> None: ...
+
+
+M = TypeVar("M", bound=_Saveable)
+
+
+def _step(title: str, path: Path, train: Callable[[], M], show: Callable[[M], None]) -> bool:
+    """Entraîne, affiche et enregistre un modèle. Renvoie False s'il manque des données."""
+    print(f"\n{title}")
+    try:
+        model = train()
+    except ValueError as exc:
+        print(f"  Non entraîné : {exc}")
+        return False
+    show(model)
+    model.save(path)
+    print(f"  Enregistré dans {path}")
+    return True
 
 
 def _pct(value: float) -> str:
@@ -105,27 +128,16 @@ def main(argv: list[str] | None = None) -> None:
 
     engine = init_db(database_url())
     folder = args.dossier or Path(models_dir())
-    steps = (
-        ("Modèle de draft", DRAFT_FILE, lambda: train_draft(engine, args.patch, args.test),
-         print_draft),
-        ("Probabilité de victoire", WINPROB_FILE,
-         lambda: train_winprob_from_db(engine, args.patch, args.test), print_winprob),
-        ("Repères par rang et par rôle", BENCHMARKS_FILE,
-         lambda: train_benchmarks(engine, args.patch), print_benchmarks),
-    )
-    trained = 0
-    for title, filename, train, show in steps:
-        print(f"\n{title}")
-        try:
-            model = train()
-        except ValueError as exc:
-            print(f"  Non entraîné : {exc}")
-            continue
-        show(model)
-        model.save(folder / filename)
-        print(f"  Enregistré dans {folder / filename}")
-        trained += 1
-    if trained == 0:
+    patch, test = args.patch, args.test
+    trained = [
+        _step("Modèle de draft", folder / DRAFT_FILE,
+              lambda: train_draft(engine, patch, test), print_draft),
+        _step("Probabilité de victoire", folder / WINPROB_FILE,
+              lambda: train_winprob_from_db(engine, patch, test), print_winprob),
+        _step("Repères par rang et par rôle", folder / BENCHMARKS_FILE,
+              lambda: train_benchmarks(engine, patch), print_benchmarks),
+    ]
+    if not any(trained):
         sys.exit("\nAucun modèle entraîné : lance d'abord « lolcoach-collecte parties ».")
 
 

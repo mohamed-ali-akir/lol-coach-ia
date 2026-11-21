@@ -120,7 +120,10 @@ def create_goal(engine: Engine, puuid: str, metric_key: str, role: str, baseline
             target=float(target), window_games=window_games,
             created_at=int(time.time()) if now is None else now, status=ACTIVE,
         ))
-        return int(result.inserted_primary_key[0])
+        key = result.inserted_primary_key
+        if key is None or key[0] is None:
+            raise GoalError("L'objectif n'a pas pu être enregistré.")
+        return int(key[0])
 
 
 def _finite(value: float) -> bool:
@@ -157,11 +160,13 @@ def evaluate_goals(engine: Engine, puuid: str, include_closed: bool = False,
         if row["status"] == ACTIVE:
             if games is None:
                 games = player_games(engine, puuid, HISTORY_GAMES)
-            values = [
-                g.values[metric.key] for g in sorted(games, key=lambda g: g.game_creation)
-                if g.game_creation > row["created_at"] * 1000 and g.role == row["role"]
-                and g.values.get(metric.key) is not None
-            ][: row["window_games"]]
+            values: list[float] = []
+            for game in sorted(games, key=lambda game: game.game_creation):
+                value = game.values.get(metric.key)
+                if (value is not None and game.role == row["role"]
+                        and game.game_creation > row["created_at"] * 1000):
+                    values.append(value)
+            values = values[: row["window_games"]]
             played = len(values)
             current = sum(values) / played if played else None
             if played >= row["window_games"] and current is not None:

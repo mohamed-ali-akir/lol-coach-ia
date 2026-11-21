@@ -102,13 +102,13 @@ def upgrade() -> None:
         sa.Column("puuid", sa.String(78), nullable=False),
         sa.Column("metric", sa.String(32), nullable=False),
         sa.Column("role", sa.String(16), nullable=False),
-        sa.Column("baseline", sa.Float, nullable=False),
-        sa.Column("target", sa.Float, nullable=False),
+        sa.Column("baseline", sa.Double, nullable=False),
+        sa.Column("target", sa.Double, nullable=False),
         sa.Column("window_games", sa.Integer, nullable=False),
         sa.Column("created_at", sa.BigInteger, nullable=False),
         sa.Column("status", sa.String(12), nullable=False),
         sa.Column("closed_at", sa.BigInteger, nullable=True),
-        sa.Column("final_value", sa.Float, nullable=True),
+        sa.Column("final_value", sa.Double, nullable=True),
         sa.PrimaryKeyConstraint("id", name="pk_goals"),
     )
     op.create_index("ix_goals_puuid", "goals", ["puuid"])

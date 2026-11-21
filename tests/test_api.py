@@ -5,7 +5,6 @@ import stat
 import pytest
 from fastapi.testclient import TestClient
 
-from lolcoach import db
 from lolcoach.api.app import Quota, create_app
 from lolcoach.api.server import _is_loopback, load_or_create_token
 from lolcoach.coach.service import Coach
@@ -213,8 +212,8 @@ def test_sync(demo):
 
 # --- objectifs ---
 
-def test_goals_lifecycle(demo, tmp_path):
-    engine = db.init_db(f"sqlite:///{tmp_path / 'api.db'}")
+def test_goals_lifecycle(demo, new_engine):
+    engine = new_engine()
     fill_demo_database(engine, n_matches=100, seed=3)
     client = make_client(Coach(engine, demo.models_dir))
     base = f"/players/{DEMO_PUUID}/goals"
