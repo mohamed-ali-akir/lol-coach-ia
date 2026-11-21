@@ -51,8 +51,8 @@ CATEGORY_ADVICE = {
                "tant que ses sorts clés sont disponibles.",
     GANK: "Pose une balise en rivière avant de pousser ta vague, et recule dès que le "
           "jungler adverse n'est plus visible sur la carte.",
-    ISOLATED: "Après 15 minutes, ne pars pas seul dans une zone sans vision : attends un "
-              "allié ou reste près de ta vague.",
+    ISOLATED: "Ne t'avance pas seul dans une zone sans vision : attends un allié ou reste "
+              "près de ta vague.",
     OUTNUMBERED: "Compte les adversaires visibles sur la carte avant de t'avancer : s'il en "
                  "manque, considère qu'ils viennent vers toi.",
     DUEL: "Note ce qui a fait perdre le duel (niveau, objets, sorts d'invocateur en "
