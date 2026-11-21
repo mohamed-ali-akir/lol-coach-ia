@@ -7,6 +7,7 @@ deux interfaces donnent exactement les mêmes réponses.
 from __future__ import annotations
 
 import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +17,7 @@ from sqlalchemy import Engine, func, select
 
 from lolcoach import db
 from lolcoach.analyse.benchmarks import Benchmarks
-from lolcoach.analyse.data import recent_match_ids
+from lolcoach.analyse.data import player_fingerprint, recent_match_ids
 from lolcoach.analyse.deaths import clock
 from lolcoach.analyse.diagnostic import Diagnostic, DiagnosticError, build_diagnostic
 from lolcoach.analyse.metrics import METRICS_BY_KEY
@@ -30,6 +31,8 @@ from lolcoach.modele.logistic import ArtifactError
 from lolcoach.modele.winprob import WinProbModel
 
 T = TypeVar("T")
+
+DIAGNOSTIC_CACHE_SIZE = 128
 
 
 class _Cached(Generic[T]):
@@ -86,6 +89,8 @@ class Coach:
         folder = Path(models_dir)
         self._benchmarks = _Cached(folder / BENCHMARKS_FILE, Benchmarks.load)
         self._winprob = _Cached(folder / WINPROB_FILE, WinProbModel.load)
+        self._diagnostics: OrderedDict[tuple[Any, ...], Diagnostic] = OrderedDict()
+        self._diagnostics_lock = threading.Lock()
 
     # --- modèles ---
 
@@ -152,9 +157,35 @@ class Coach:
 
     # --- analyses ---
 
+    def _diagnose(self, puuid: str, n_games: int = 30, role: str | None = None) -> Diagnostic:
+        """Diagnostic du joueur, gardé en mémoire tant que rien n'a changé.
+
+        Le rapport, les objectifs et l'onglet le demandent à chaque affichage alors qu'il ne
+        change qu'après une nouvelle partie. La clé contient l'empreinte des parties du
+        joueur et la date des repères : nouvelle partie, timeline complétée ou nouvel
+        entraînement donnent une autre clé, donc un nouveau calcul.
+        """
+        benchmarks = self.benchmarks()
+        with self.engine.connect() as conn:
+            player = db.get_player(conn, puuid)
+            fingerprint = player_fingerprint(conn, puuid)
+        key = (puuid, n_games, role, fingerprint, player["tier"] if player else None,
+               benchmarks.trained_at, benchmarks.n_games)
+        with self._diagnostics_lock:
+            cached = self._diagnostics.get(key)
+            if cached is not None:
+                self._diagnostics.move_to_end(key)
+                return cached
+        diagnostic = build_diagnostic(self.engine, benchmarks, puuid, n_games, role)
+        with self._diagnostics_lock:
+            self._diagnostics[key] = diagnostic
+            while len(self._diagnostics) > DIAGNOSTIC_CACHE_SIZE:
+                self._diagnostics.popitem(last=False)
+        return diagnostic
+
     def diagnostic(self, puuid: str, n_games: int = 30, role: str | None = None,
                    use_llm: bool = False) -> DiagnosticResult:
-        diagnostic = build_diagnostic(self.engine, self.benchmarks(), puuid, n_games, role)
+        diagnostic = self._diagnose(puuid, n_games, role)
         text, rewritten, note = self._finish(render_diagnostic(diagnostic), use_llm)
         return DiagnosticResult(text, rewritten, note, diagnostic)
 
@@ -174,7 +205,7 @@ class Coach:
         focus = None
         if benchmarks is not None:
             try:
-                priorities = build_diagnostic(self.engine, benchmarks, puuid).priorities
+                priorities = self._diagnose(puuid).priorities
                 focus = priorities[0] if priorities else None
             except DiagnosticError:
                 focus = None  # pas assez de parties : le rapport reste valable sans
@@ -188,7 +219,7 @@ class Coach:
         return goals_module.evaluate_goals(self.engine, puuid, include_closed)
 
     def goal_proposals(self, puuid: str) -> list[Proposal]:
-        diagnostic = build_diagnostic(self.engine, self.benchmarks(), puuid)
+        diagnostic = self._diagnose(puuid)
         active = {goal.metric for goal in self.goals(puuid)}
         return [p for p in goals_module.propose_goals(diagnostic) if p.metric not in active]
 
@@ -196,7 +227,7 @@ class Coach:
                     window_games: int = goals_module.DEFAULT_WINDOW) -> int:
         """Crée un objectif. Le point de départ est la moyenne actuelle du joueur ;
         sans `target`, la cible proposée par le coach est utilisée."""
-        diagnostic = build_diagnostic(self.engine, self.benchmarks(), puuid)
+        diagnostic = self._diagnose(puuid)
         finding = next((f for f in diagnostic.findings if f.metric == metric), None)
         if finding is None:
             raise GoalError("Pas assez de parties pour mesurer cette statistique.")

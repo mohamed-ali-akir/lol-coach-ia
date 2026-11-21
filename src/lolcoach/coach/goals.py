@@ -20,7 +20,7 @@ from sqlalchemy import Engine, select
 
 from lolcoach import db
 from lolcoach.analyse.diagnostic import Diagnostic
-from lolcoach.analyse.metrics import METRICS_BY_KEY, ROLES, Metric, player_games
+from lolcoach.analyse.metrics import METRICS_BY_KEY, ROLES, Metric, player_games_since
 
 ACTIVE, REACHED, MISSED, DROPPED = "actif", "atteint", "manque", "abandonne"
 STATUS_LABELS = {ACTIVE: "en cours", REACHED: "atteint", MISSED: "manqué",
@@ -28,7 +28,7 @@ STATUS_LABELS = {ACTIVE: "en cours", REACHED: "atteint", MISSED: "manqué",
 MAX_ACTIVE = 3
 DEFAULT_WINDOW = 10
 MIN_WINDOW, MAX_WINDOW = 3, 50
-HISTORY_GAMES = 100  # parties relues pour mesurer l'avancement
+HISTORY_GAMES = 200  # parties lues au plus depuis la création du plus ancien objectif
 # La vérification « pas de doublon, 3 objectifs au plus » et l'enregistrement doivent se suivre
 # sans qu'une autre requête s'intercale (l'API traite plusieurs requêtes à la fois).
 _CREATE_LOCK = threading.Lock()
@@ -163,9 +163,11 @@ def evaluate_goals(engine: Engine, puuid: str, include_closed: bool = False,
         current, played = row["final_value"], row["window_games"]
         if row["status"] == ACTIVE:
             if games is None:
-                games = player_games(engine, puuid, HISTORY_GAMES)
+                # Seules les parties jouées depuis le plus ancien objectif en cours sont lues.
+                oldest = min(r["created_at"] for r in rows if r["status"] == ACTIVE)
+                games = player_games_since(engine, puuid, oldest * 1000, HISTORY_GAMES)
             values: list[float] = []
-            for game in sorted(games, key=lambda game: game.game_creation):
+            for game in games:
                 value = game.values.get(metric.key)
                 if (value is not None and game.role == row["role"]
                         and game.game_creation > row["created_at"] * 1000):

@@ -60,9 +60,11 @@ def main(argv: list[str] | None = None) -> None:
 
     print("Entraînement des modèles…")
     training.train_draft(engine, None, 0.2).save(models / training.DRAFT_FILE)
-    winprob = training.train_winprob_from_db(engine, None, 0.2)
+    benchmarks, winprob = training.train_analysis(engine, None, 0.2)
+    if isinstance(benchmarks, ValueError) or isinstance(winprob, ValueError):
+        raise SystemExit("Pas assez de parties simulées pour entraîner les modèles.")
     winprob.save(models / training.WINPROB_FILE)
-    training.train_benchmarks(engine, None).save(models / training.BENCHMARKS_FILE)
+    benchmarks.save(models / training.BENCHMARKS_FILE)
     training.print_winprob(winprob)
 
     coach = Coach(engine, models)

@@ -20,13 +20,23 @@ from typing import Protocol, TypeVar
 
 from sqlalchemy import Engine
 
-from lolcoach.analyse.benchmarks import ALL_TIERS, Benchmarks, build_benchmarks
+from lolcoach.analyse.benchmarks import (
+    ALL_TIERS,
+    BenchmarkBuilder,
+    Benchmarks,
+    build_benchmarks,
+)
 from lolcoach.analyse.data import all_match_ids, iter_matches
-from lolcoach.analyse.metrics import METRICS_BY_KEY, ROLE_LABELS, iter_population
+from lolcoach.analyse.metrics import (
+    METRICS_BY_KEY,
+    ROLE_LABELS,
+    compute_game,
+    iter_population,
+)
 from lolcoach.config import database_url, models_dir
 from lolcoach.db import init_db
 from lolcoach.modele.draft import DraftModel, describe, load_drafts, train_draft_model
-from lolcoach.modele.winprob import WinProbModel, train_winprob
+from lolcoach.modele.winprob import WinProbModel, WinProbTrainer, train_winprob
 
 DRAFT_FILE = "draft.json"
 WINPROB_FILE = "victoire.json"
@@ -38,6 +48,7 @@ class _Saveable(Protocol):
 
 
 M = TypeVar("M", bound=_Saveable)
+T = TypeVar("T")
 
 
 def _step(title: str, path: Path, train: Callable[[], M], show: Callable[[M], None]) -> bool:
@@ -63,6 +74,38 @@ def train_draft(engine: Engine, patch: str | None, test_ratio: float) -> DraftMo
     return train_draft_model(drafts, names, test_ratio)
 
 
+def train_analysis(engine: Engine, patch: str | None, test_ratio: float
+                   ) -> tuple[Benchmarks | ValueError, WinProbModel | ValueError]:
+    """Entraîne les repères et la probabilité de victoire en lisant les parties UNE seule
+    fois (la lecture est le poste le plus coûteux). Chaque résultat est le modèle, ou
+    l'erreur expliquant pourquoi il n'a pas pu être entraîné."""
+    with engine.connect() as conn:
+        # Les parties sans timeline comptent pour les repères : une partie des statistiques
+        # n'en dépend pas. Le modèle de victoire les ignore.
+        match_ids = all_match_ids(conn, patch, timeline_only=False)
+    builder, trainer = BenchmarkBuilder(), WinProbTrainer()
+    for match in iter_matches(engine, match_ids):
+        trainer.add(match)
+        for pid in match.players:
+            builder.add(compute_game(match, pid))
+
+    benchmarks: Benchmarks | ValueError = builder.finish()
+    if isinstance(benchmarks, Benchmarks) and not benchmarks.groups:
+        benchmarks = ValueError("Pas assez de parties pour établir des repères.")
+    winprob: WinProbModel | ValueError
+    try:
+        winprob = trainer.finish(test_ratio)
+    except ValueError as exc:
+        winprob = exc
+    return benchmarks, winprob
+
+
+def _or_raise(result: T | ValueError) -> T:
+    if isinstance(result, ValueError):
+        raise result
+    return result
+
+
 def train_winprob_from_db(engine: Engine, patch: str | None, test_ratio: float) -> WinProbModel:
     with engine.connect() as conn:
         match_ids = all_match_ids(conn, patch)
@@ -71,7 +114,6 @@ def train_winprob_from_db(engine: Engine, patch: str | None, test_ratio: float) 
 
 def train_benchmarks(engine: Engine, patch: str | None) -> Benchmarks:
     with engine.connect() as conn:
-        # Les parties sans timeline comptent aussi : une partie des statistiques n'en dépend pas.
         match_ids = all_match_ids(conn, patch, timeline_only=False)
     benchmarks = build_benchmarks(iter_population(engine, match_ids))
     if not benchmarks.groups:
@@ -129,13 +171,15 @@ def main(argv: list[str] | None = None) -> None:
     engine = init_db(database_url())
     folder = args.dossier or Path(models_dir())
     patch, test = args.patch, args.test
+    draft_trained = _step("Modèle de draft", folder / DRAFT_FILE,
+                          lambda: train_draft(engine, patch, test), print_draft)
+    benchmarks, winprob = train_analysis(engine, patch, test)
     trained = [
-        _step("Modèle de draft", folder / DRAFT_FILE,
-              lambda: train_draft(engine, patch, test), print_draft),
+        draft_trained,
         _step("Probabilité de victoire", folder / WINPROB_FILE,
-              lambda: train_winprob_from_db(engine, patch, test), print_winprob),
+              lambda: _or_raise(winprob), print_winprob),
         _step("Repères par rang et par rôle", folder / BENCHMARKS_FILE,
-              lambda: train_benchmarks(engine, patch), print_benchmarks),
+              lambda: _or_raise(benchmarks), print_benchmarks),
     ]
     if not any(trained):
         sys.exit("\nAucun modèle entraîné : lance d'abord « lolcoach-collecte parties ».")

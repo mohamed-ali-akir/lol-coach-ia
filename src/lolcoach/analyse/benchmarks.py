@@ -11,6 +11,7 @@ appris sur les mêmes parties. Le tout est enregistré en JSON.
 
 from __future__ import annotations
 
+from array import array
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -157,7 +158,8 @@ class Benchmarks:
             raise ArtifactError(f"{path} : repères illisibles ({exc!r})") from exc
 
 
-def _importance(role: str, games: list[GameMetrics]) -> dict[str, float]:
+def _importance(role: str, wins: np.ndarray, columns: dict[str, np.ndarray]
+                ) -> dict[str, float]:
     """Poids de chaque statistique dans la victoire pour ce rôle.
 
     Chaque statistique est évaluée seule : à quel point distingue-t-elle les gagnants
@@ -170,13 +172,11 @@ def _importance(role: str, games: list[GameMetrics]) -> dict[str, float]:
     """
     metrics = metrics_for(role)
     uniform = {m.key: 1.0 / len(metrics) for m in metrics}
-    if len(games) < MIN_IMPORTANCE:
+    if len(wins) < MIN_IMPORTANCE:
         return uniform
-    wins = np.array([g.win for g in games], dtype=int)
     raw = np.zeros(len(metrics))
     for i, metric in enumerate(metrics):
-        values = np.array([np.nan if g.values.get(metric.key) is None else g.values[metric.key]
-                           for g in games], dtype=float)
+        values = columns[metric.key]
         known = np.isfinite(values)
         if known.sum() < MIN_IMPORTANCE:
             continue
@@ -192,38 +192,69 @@ def _importance(role: str, games: list[GameMetrics]) -> dict[str, float]:
     return {m.key: float(w) for m, w in zip(metrics, weights, strict=True)}
 
 
-def build_benchmarks(games: Iterable[GameMetrics]) -> Benchmarks:
-    values: dict[str, dict[str, list[float]]] = {}
-    counts: dict[str, int] = {}
-    by_role: dict[str, list[GameMetrics]] = {role: [] for role in ROLES}
-    total = 0
+class BenchmarkBuilder:
+    """Construit les repères partie par partie, sans garder les parties en mémoire : seuls
+    des nombres sont conservés (8 octets par valeur), ce qui permet de traiter des centaines
+    de milliers de parties."""
 
-    for game in games:
-        if game.role not in by_role:
-            continue
-        total += 1
-        by_role[game.role].append(game)
+    def __init__(self) -> None:
+        self._values: dict[str, dict[str, array[float]]] = {}
+        self._counts: dict[str, int] = {}
+        # Par rôle : résultat de chaque partie et valeur de chaque statistique (NaN si absente).
+        self._wins = {role: array("b") for role in ROLES}
+        self._columns = {role: {m.key: array("d") for m in metrics_for(role)} for role in ROLES}
+        self.total = 0
+
+    def add(self, game: GameMetrics) -> None:
+        if game.role not in self._wins:
+            return
+        self.total += 1
+        self._wins[game.role].append(1 if game.win else 0)
+        columns = self._columns[game.role]
+        known: list[tuple[str, float]] = []
+        for metric, column in columns.items():
+            value = game.values.get(metric)
+            if value is not None and np.isfinite(value):
+                column.append(value)
+                known.append((metric, float(value)))
+            else:
+                column.append(float("nan"))
         for tier in filter(None, (game.tier, ALL_TIERS)):
             key = _key(tier, game.role, game.win)
-            counts[key] = counts.get(key, 0) + 1
-            bucket = values.setdefault(key, {})
-            for metric, value in game.values.items():
-                if value is not None and np.isfinite(value):
-                    bucket.setdefault(metric, []).append(float(value))
+            self._counts[key] = self._counts.get(key, 0) + 1
+            bucket = self._values.setdefault(key, {})
+            for metric, value in known:
+                if metric not in bucket:
+                    bucket[metric] = array("d")
+                bucket[metric].append(value)
 
-    groups: dict[str, Group] = {}
-    for key, bucket in values.items():
-        needed = MIN_ANY if key.startswith(ALL_TIERS + "|") else MIN_GROUP
-        if counts[key] < needed:
-            continue
-        kept = {metric: series for metric, series in bucket.items() if len(series) >= MIN_ANY}
-        if kept:
-            groups[key] = {
-                "n": counts[key],
-                "metrics": {metric: [float(v) for v in np.percentile(series, QUANTILES)]
-                            for metric, series in kept.items()},
-                "means": {metric: float(np.mean(series)) for metric, series in kept.items()},
-            }
+    def finish(self) -> Benchmarks:
+        groups: dict[str, Group] = {}
+        for key, bucket in self._values.items():
+            needed = MIN_ANY if key.startswith(ALL_TIERS + "|") else MIN_GROUP
+            if self._counts[key] < needed:
+                continue
+            kept = {metric: np.frombuffer(series, dtype=float)
+                    for metric, series in bucket.items() if len(series) >= MIN_ANY}
+            if kept:
+                groups[key] = {
+                    "n": self._counts[key],
+                    "metrics": {metric: [float(v) for v in np.percentile(series, QUANTILES)]
+                                for metric, series in kept.items()},
+                    "means": {metric: float(series.mean()) for metric, series in kept.items()},
+                }
+        importance = {}
+        for role in ROLES:
+            wins = np.frombuffer(self._wins[role], dtype=np.int8)
+            if len(wins):
+                columns = {metric: np.frombuffer(column, dtype=float)
+                           for metric, column in self._columns[role].items()}
+                importance[role] = _importance(role, wins, columns)
+        return Benchmarks(groups, importance, self.total, now_iso())
 
-    importance = {role: _importance(role, by_role[role]) for role in ROLES if by_role[role]}
-    return Benchmarks(groups, importance, total, now_iso())
+
+def build_benchmarks(games: Iterable[GameMetrics]) -> Benchmarks:
+    builder = BenchmarkBuilder()
+    for game in games:
+        builder.add(game)
+    return builder.finish()

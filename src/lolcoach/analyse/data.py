@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-from sqlalchemy import Connection, Engine, select
+from sqlalchemy import Connection, Engine, case, func, select
 
 from lolcoach import db
 
@@ -52,7 +52,11 @@ class MatchData:
     x: np.ndarray = field(default_factory=lambda: np.zeros((0, 11)))
     y: np.ndarray = field(default_factory=lambda: np.zeros((0, 11)))
     events: list[Event] = field(default_factory=list)
+    # Calculs faits une seule fois par partie, puis réutilisés pour chacun des 10 joueurs.
     _kills: list[Event] | None = field(default=None, repr=False, compare=False)
+    _kills_around: np.ndarray | None = field(default=None, repr=False, compare=False)
+    _objectives: tuple[np.ndarray, list[Event]] | None = field(default=None, repr=False,
+                                                               compare=False)
 
     @property
     def has_timeline(self) -> bool:
@@ -115,6 +119,50 @@ class MatchData:
             self._kills = [e for e in self.events if e.type == db.EVENT_KILL]
         return self._kills
 
+    def kills_around(self, window_ms: int) -> np.ndarray:
+        """Pour chaque mort (même ordre que `kills()`), le nombre de morts survenues à moins
+        de `window_ms`, elle comprise. Recherche dans la liste triée : pas de comparaison de
+        chaque mort avec toutes les autres."""
+        if self._kills_around is None:
+            ts = np.fromiter((k.ts for k in self.kills()), dtype=np.int64)
+            self._kills_around = (np.searchsorted(ts, ts + window_ms, side="right")
+                                  - np.searchsorted(ts, ts - window_ms, side="left"))
+        return self._kills_around
+
+    def objectives(self) -> tuple[np.ndarray, list[Event]]:
+        """Monstres épiques et bâtiments pris, dans l'ordre : (heures, événements)."""
+        if self._objectives is None:
+            taken = [e for e in self.events if e.type in (db.EVENT_MONSTER, db.EVENT_BUILDING)]
+            self._objectives = (np.fromiter((e.ts for e in taken), dtype=np.int64), taken)
+        return self._objectives
+
+
+def match_ids_since(conn: Connection, puuid: str, since_ms: int, limit: int) -> list[str]:
+    """Parties d'un joueur commencées après `since_ms`, de la plus ancienne à la plus récente."""
+    query = (
+        select(db.matches.c.match_id)
+        .join(db.participants, db.participants.c.match_id == db.matches.c.match_id)
+        .where(db.participants.c.puuid == puuid, db.participants.c.participant_id.is_not(None),
+               db.matches.c.game_creation > since_ms)
+        .order_by(db.matches.c.game_creation, db.matches.c.match_id)
+        .limit(limit)
+    )
+    return list(conn.execute(query).scalars())
+
+
+def player_fingerprint(conn: Connection, puuid: str) -> tuple[int, int, int]:
+    """Empreinte des parties d'un joueur : (nombre, nombre avec timeline, date de la dernière).
+    Elle change dès qu'une partie est ajoutée ou complétée : sert de clé de cache."""
+    row = conn.execute(
+        select(func.count(), func.coalesce(func.sum(case((db.matches.c.has_timeline, 1),
+                                                         else_=0)), 0),
+               func.coalesce(func.max(db.matches.c.game_creation), 0))
+        .select_from(db.matches)
+        .join(db.participants, db.participants.c.match_id == db.matches.c.match_id)
+        .where(db.participants.c.puuid == puuid)
+    ).one()
+    return int(row[0]), int(row[1]), int(row[2])
+
 
 def recent_match_ids(conn: Connection, puuid: str, limit: int) -> list[str]:
     """Dernières parties d'un joueur, de la plus récente à la plus ancienne."""
@@ -140,13 +188,18 @@ def all_match_ids(conn: Connection, patch: str | None = None, timeline_only: boo
     return list(conn.execute(query).scalars())
 
 
-def iter_matches(engine: Engine, match_ids: Sequence[str]) -> Iterator[MatchData]:
+def iter_matches(engine: Engine, match_ids: Sequence[str], wards: bool = False
+                 ) -> Iterator[MatchData]:
     """Charge les parties par lots, dans l'ordre demandé. Les parties inconnues, ou
-    collectées par une ancienne version sans numéros de participants, sont ignorées."""
+    collectées par une ancienne version sans numéros de participants, sont ignorées.
+
+    Les poses et destructions de balises représentent la majorité des événements et ne
+    servent à aucune analyse actuelle : elles ne sont chargées que si `wards` est vrai.
+    """
     for start in range(0, len(match_ids), CHUNK):
         chunk = list(match_ids[start:start + CHUNK])
         with engine.connect() as conn:
-            loaded = _load_chunk(conn, chunk)
+            loaded = _load_chunk(conn, chunk, wards)
         for match_id in chunk:
             if match_id in loaded:
                 yield loaded[match_id]
@@ -160,7 +213,8 @@ def load_match(engine: Engine, match_id: str) -> MatchData | None:
     return next(iter_matches(engine, [match_id]), None)
 
 
-def _load_chunk(conn: Connection, match_ids: list[str]) -> dict[str, MatchData]:
+def _load_chunk(conn: Connection, match_ids: list[str], wards: bool = False
+                ) -> dict[str, MatchData]:
     result: dict[str, MatchData] = {}
     for row in conn.execute(select(db.matches).where(db.matches.c.match_id.in_(match_ids))):
         result[row.match_id] = MatchData(
@@ -214,6 +268,8 @@ def _load_chunk(conn: Connection, match_ids: list[str]) -> dict[str, MatchData]:
     ev = db.events
     query = select(ev).where(ev.c.match_id.in_(match_ids)).order_by(
         ev.c.match_id, ev.c.timestamp_ms, ev.c.seq)
+    if not wards:
+        query = query.where(ev.c.type.not_in((db.EVENT_WARD_PLACED, db.EVENT_WARD_KILL)))
     for row in conn.execute(query).all():
         match = result.get(row.match_id)
         if match is None:
@@ -224,7 +280,7 @@ def _load_chunk(conn: Connection, match_ids: list[str]) -> dict[str, MatchData]:
             team_id=row.team_id,
             actor=row.actor_id or 0,
             victim=row.victim_id or 0,
-            assists=tuple(db.mask_ids(row.assists_mask or 0)),
+            assists=db.mask_ids(row.assists_mask or 0),
             x=row.x,
             y=row.y,
             kind=row.kind,

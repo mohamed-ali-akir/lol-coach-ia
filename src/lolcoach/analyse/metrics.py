@@ -15,7 +15,7 @@ from sqlalchemy import Engine
 
 from lolcoach import db
 from lolcoach.analyse import deaths as deaths_module
-from lolcoach.analyse.data import MatchData, iter_matches, recent_match_ids
+from lolcoach.analyse.data import MatchData, iter_matches, match_ids_since, recent_match_ids
 
 ROLES = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
 ROLE_LABELS = {"TOP": "top", "JUNGLE": "jungle", "MIDDLE": "mid", "BOTTOM": "ADC",
@@ -274,6 +274,20 @@ def player_games(engine: Engine, puuid: str, limit: int = 30) -> list[GameMetric
     """Statistiques des dernières parties d'un joueur, de la plus récente à la plus ancienne."""
     with engine.connect() as conn:
         match_ids = recent_match_ids(conn, puuid, limit)
+    games = []
+    for match in iter_matches(engine, match_ids):
+        pid = match.pid_of(puuid)
+        if pid is not None:
+            games.append(compute_game(match, pid))
+    return games
+
+
+def player_games_since(engine: Engine, puuid: str, since_ms: int, limit: int
+                       ) -> list[GameMetrics]:
+    """Statistiques des parties d'un joueur commencées après `since_ms`, de la plus ancienne
+    à la plus récente. Ne lit que ces parties-là."""
+    with engine.connect() as conn:
+        match_ids = match_ids_since(conn, puuid, since_ms, limit)
     games = []
     for match in iter_matches(engine, match_ids):
         pid = match.pid_of(puuid)

@@ -18,7 +18,6 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from lolcoach import db
 from lolcoach.analyse.data import MatchData
 
 NEARBY_RADIUS = 2000  # unités de carte
@@ -123,12 +122,13 @@ def _allies_nearby(match: MatchData, pid: int, ts: int, x: int | None, y: int | 
 
 
 def _objective_lost(match: MatchData, enemy_team: int, ts: int) -> str | None:
-    for event in match.events:
-        if event.ts <= ts:
-            continue
+    times, taken = match.objectives()
+    # Premier objectif pris strictement après la mort, trouvé par recherche dans la liste triée.
+    for index in range(int(np.searchsorted(times, ts, side="right")), len(taken)):
+        event = taken[index]
         if event.ts > ts + OBJECTIVE_WINDOW_MS:
             break
-        if event.team_id == enemy_team and event.type in (db.EVENT_MONSTER, db.EVENT_BUILDING):
+        if event.team_id == enemy_team:
             return event.kind or event.type
     return None
 
@@ -145,17 +145,18 @@ def classify_deaths(match: MatchData, pid: int) -> list[Death]:
     7. escarmouche : le reste.
     """
     kills = match.kills()
+    kills_around = match.kills_around(TEAMFIGHT_WINDOW_MS)
     team = match.team(pid)
     enemy_team = 300 - team
     deaths = []
-    for kill in kills:
+    for index, kill in enumerate(kills):
         if kill.victim != pid:
             continue
         involved = ({kill.actor} if kill.actor else set()) | set(kill.assists)
         enemies = len(involved)
         allies = _allies_nearby(match, pid, kill.ts, kill.x, kill.y)
         early = kill.ts < EARLY_GAME_MS
-        around = sum(abs(other.ts - kill.ts) <= TEAMFIGHT_WINDOW_MS for other in kills)
+        around = int(kills_around[index])
         jungler_involved = any(match.players[e]["position"] == "JUNGLE" for e in involved)
 
         if kill.actor == 0:

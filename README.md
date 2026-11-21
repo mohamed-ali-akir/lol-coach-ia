@@ -116,7 +116,8 @@ Ce projet n'analyse que des parties **terminées**. Un produit public doit être
 ```bash
 ruff check .          # style
 mypy                  # types, mode strict
-pytest -q             # 184 tests, sans réseau (réponses Riot simulées)
+pytest -q             # 193 tests, sans réseau (réponses Riot simulées)
+python benchmarks/mesures.py   # temps de chaque étape, pour vérifier qu'une modification ne ralentit rien
 
 # Les mêmes tests sur MySQL / MariaDB :
 LOLCOACH_TEST_DATABASE_URL=mysql+pymysql://utilisateur:motdepasse@localhost/ pytest -q
@@ -124,7 +125,9 @@ LOLCOACH_TEST_DATABASE_URL=mysql+pymysql://utilisateur:motdepasse@localhost/ pyt
 
 La CI lance tout cela sur Python 3.11 et 3.13, sur MariaDB, avec les versions figées de `requirements-lock.txt`, et vérifie que le paquet installé fait tourner la démo.
 
-Le fonctionnement interne, les choix de conception et la marche à suivre pour faire évoluer le projet (nouvelle statistique, migration de la base, changement de l'API Riot) sont dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Le fonctionnement interne, les choix de conception et la marche à suivre pour faire évoluer le projet (nouvelle statistique, migration de la base, changement de l'API Riot) sont dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Les mesures de performance, les optimisations faites et celles volontairement écartées sont dans [docs/PERFORMANCES.md](docs/PERFORMANCES.md).
+
+Ordres de grandeur (1 500 parties simulées) : entraînement complet en 3 secondes, diagnostic en 34 ms au premier calcul puis moins d'une milliseconde, rapport d'une partie en 3 ms.
 
 ## Feuille de route
 

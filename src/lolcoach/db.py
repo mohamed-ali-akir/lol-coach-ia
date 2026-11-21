@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable, Sequence
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -192,8 +193,10 @@ def assists_mask(participant_ids: Iterable[int]) -> int:
     return mask
 
 
-def mask_ids(mask: int) -> list[int]:
-    return [pid for pid in range(1, 11) if mask & (1 << pid)]
+@lru_cache(maxsize=2048)
+def mask_ids(mask: int) -> tuple[int, ...]:
+    """Participants d'un masque d'assistances. Mis en cache : il n'existe que 1 024 masques."""
+    return tuple(pid for pid in range(1, 11) if mask & (1 << pid))
 
 
 def _configure_sqlite(engine: Engine) -> None:

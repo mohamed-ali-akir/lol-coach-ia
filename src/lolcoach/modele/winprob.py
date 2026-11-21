@@ -172,58 +172,80 @@ class WinProbModel:
             raise ArtifactError(f"{path} : modèle de victoire illisible ({exc!r})") from exc
 
 
+class WinProbTrainer:
+    """Accumule les états des parties une à une, puis entraîne le modèle.
+
+    Les parties doivent être ajoutées de la plus ancienne à la plus récente : le test se
+    fait sur les dernières.
+    """
+
+    def __init__(self) -> None:
+        self._ts: list[np.ndarray] = []
+        self._x: list[np.ndarray] = []
+        self._y: list[np.ndarray] = []
+        self._owner: list[np.ndarray] = []
+        self.n_matches = 0
+
+    def add(self, match: MatchData) -> None:
+        if not match.has_timeline:
+            return
+        ts, x = match_states(match)
+        self._ts.append(ts)
+        self._x.append(x)
+        self._y.append(np.full(len(ts), int(match.winning_team == 100)))
+        self._owner.append(np.full(len(ts), self.n_matches))
+        self.n_matches += 1
+
+    def finish(self, test_ratio: float = 0.2, regularization: float = 1.0) -> WinProbModel:
+        n_matches = self.n_matches
+        if n_matches < MIN_MATCHES:
+            raise ValueError(
+                f"Seulement {n_matches} parties avec timeline : il en faut au moins "
+                f"{MIN_MATCHES}."
+            )
+        ts = np.concatenate(self._ts)
+        x = np.concatenate(self._x)
+        y = np.concatenate(self._y)
+        owner = np.concatenate(self._owner)
+        buckets = _bucket(ts / MINUTE_MS)
+
+        train = owner < int(n_matches * (1 - test_ratio))  # découpage par partie, chronologique
+        test = ~train
+
+        centers, models = [], []
+        for bucket in np.unique(buckets):
+            rows = train & (buckets == bucket)
+            if rows.sum() < MIN_ROWS or len(np.unique(y[rows])) < 2:
+                continue
+            models.append(fit_logistic(x[rows], y[rows], FEATURES, regularization))
+            centers.append(float(bucket * BUCKET_MIN + BUCKET_MIN / 2))
+        if not models:
+            raise ValueError("Pas assez de données par tranche de temps pour entraîner.")
+
+        result = WinProbModel(centers, models, n_matches=n_matches, trained_at=now_iso())
+        proba = result.predict(ts[test], x[test])
+        scores = evaluate(y[test], proba)
+        baseline = evaluate(y[test], np.full(int(test.sum()), float(y[train].mean())))
+        result.metrics = {
+            "parties_entrainement": float(len(np.unique(owner[train]))),
+            "parties_test": float(len(np.unique(owner[test]))),
+            **{k: v for k, v in scores.items() if k != "n"},
+            "precision_reference": baseline["precision"],
+            "brier_reference": baseline["brier"],
+        }
+        for bucket in np.unique(buckets[test]):
+            rows = buckets[test] == bucket
+            first = int(bucket * BUCKET_MIN)
+            label = f"{first}+" if first >= LAST_BUCKET_START else f"{first}-{first + 5}"
+            result.by_bucket[label] = float(
+                np.mean((proba[rows] >= 0.5) == (y[test][rows] == 1)))
+        return result
+
+
 def train_winprob(matches: Iterable[MatchData], test_ratio: float = 0.2,
                   regularization: float = 1.0) -> WinProbModel:
     """Entraîne le modèle. `matches` doit être trié du plus ancien au plus récent."""
-    ts_parts, x_parts, y_parts, match_index = [], [], [], []
-    n_matches = 0
+    trainer = WinProbTrainer()
     for match in matches:
-        if not match.has_timeline:
-            continue
-        ts, x = match_states(match)
-        ts_parts.append(ts)
-        x_parts.append(x)
-        y_parts.append(np.full(len(ts), int(match.winning_team == 100)))
-        match_index.append(np.full(len(ts), n_matches))
-        n_matches += 1
-    if n_matches < MIN_MATCHES:
-        raise ValueError(
-            f"Seulement {n_matches} parties avec timeline : il en faut au moins {MIN_MATCHES}."
-        )
-    ts = np.concatenate(ts_parts)
-    x = np.concatenate(x_parts)
-    y = np.concatenate(y_parts)
-    owner = np.concatenate(match_index)
-    minutes = ts / MINUTE_MS
-    buckets = _bucket(minutes)
-
-    train = owner < int(n_matches * (1 - test_ratio))  # découpage par partie, chronologique
-    test = ~train
-
-    centers, models = [], []
-    for bucket in np.unique(buckets):
-        rows = train & (buckets == bucket)
-        if rows.sum() < MIN_ROWS or len(np.unique(y[rows])) < 2:
-            continue
-        models.append(fit_logistic(x[rows], y[rows], FEATURES, regularization))
-        centers.append(float(bucket * BUCKET_MIN + BUCKET_MIN / 2))
-    if not models:
-        raise ValueError("Pas assez de données par tranche de temps pour entraîner.")
-
-    result = WinProbModel(centers, models, n_matches=n_matches, trained_at=now_iso())
-    proba = result.predict(ts[test], x[test])
-    scores = evaluate(y[test], proba)
-    baseline = evaluate(y[test], np.full(int(test.sum()), float(y[train].mean())))
-    result.metrics = {
-        "parties_entrainement": float(len(np.unique(owner[train]))),
-        "parties_test": float(len(np.unique(owner[test]))),
-        **{k: v for k, v in scores.items() if k != "n"},
-        "precision_reference": baseline["precision"],
-        "brier_reference": baseline["brier"],
-    }
-    for bucket in np.unique(buckets[test]):
-        rows = buckets[test] == bucket
-        label = f"{int(bucket * BUCKET_MIN)}+" if bucket * BUCKET_MIN >= LAST_BUCKET_START else (
-            f"{int(bucket * BUCKET_MIN)}-{int(bucket * BUCKET_MIN + BUCKET_MIN)}")
-        result.by_bucket[label] = float(np.mean((proba[rows] >= 0.5) == (y[test][rows] == 1)))
-    return result
+        trainer.add(match)
+    return trainer.finish(test_ratio, regularization)
