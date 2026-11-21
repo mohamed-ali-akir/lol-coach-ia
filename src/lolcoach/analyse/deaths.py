@@ -86,7 +86,8 @@ class Death:
     # Remplis par `death_costs` :
     wp_before: float | None = None  # probabilité de victoire de son équipe avant la mort
     wp_after: float | None = None  # ... environ 2 minutes après
-    cost: float | None = None  # points de probabilité perdus attribués à cette mort
+    cost: float | None = None  # part de la baisse attribuée à cette mort (de 0 à 1)
+    team_deaths: int = 1  # morts de son équipe sur la période (la baisse est partagée)
 
     @property
     def clock(self) -> str:
@@ -218,5 +219,6 @@ def death_costs(match: MatchData, pid: int, deaths: list[Death], curve: np.ndarr
         after = float(np.interp(after_ts, frame_ts, own))
         sharing = sum(before_ts <= ts <= after_ts for ts in team_deaths) or 1
         cost = max(0.0, before - after) / sharing
-        result.append(replace(death, wp_before=before, wp_after=after, cost=cost))
+        result.append(replace(death, wp_before=before, wp_after=after, cost=cost,
+                              team_deaths=sharing))
     return result

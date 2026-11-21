@@ -19,11 +19,16 @@ dependencies = [
 
 [project.optional-dependencies]
 mysql = ["pymysql>=1.1"]
-dev = ["pytest>=8", "ruff>=0.6"]
+api = ["fastapi>=0.110", "uvicorn>=0.29"]
+claude = ["anthropic>=1.0"]
+dev = ["pytest>=8", "ruff>=0.6", "fastapi>=0.110", "uvicorn>=0.29", "anthropic>=1.0"]
 
 [project.scripts]
 lolcoach-collecte = "lolcoach.collecte.cli:main"
 lolcoach-entrainer = "lolcoach.modele.cli:main"
+lolcoach-coach = "lolcoach.coach.cli:main"
+lolcoach-api = "lolcoach.api.server:main"
+lolcoach-demo = "lolcoach.demo:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

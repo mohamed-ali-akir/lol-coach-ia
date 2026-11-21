@@ -138,6 +138,7 @@ class _Game:
         self.tick = MINUTE_MS
         self.events: list[dict[str, Any]] = []
         self.deaths_now = {100: 0, 200: 0}
+        self.dead_now: set[int] = set()  # un joueur ne meurt qu'une fois par minute simulée
         self.recent_deaths = {100: 0, 200: 0}
         self.positions = {p: self._jitter(self.home[p], 300) for p in PIDS}
         self.pending_positions: dict[int, tuple[int, int]] = {}
@@ -200,8 +201,10 @@ class _Game:
             self.gold[p] += gained * 21 + 120
             self.xp[p] += gained * 62 + 130
 
-    def _pick_victim(self, team: int) -> int:
-        mates = _members(team)
+    def _pick_victim(self, team: int) -> int | None:
+        mates = [m for m in _members(team) if m not in self.dead_now]
+        if not mates:
+            return None
         weights = np.array([self.profiles[m].deaths for m in mates])
         return int(self.rng.choice(mates, p=weights / weights.sum()))
 
@@ -221,6 +224,7 @@ class _Game:
         self.stats[killer]["kills"] += 1
         self.stats[killer]["solo"] += 0 if assists else 1
         self.stats[victim]["deaths"] += 1
+        self.dead_now.add(victim)
         self.stats[victim]["dead_s"] += int(8 + 1.3 * self.minute)
         self.deaths_now[_team(victim)] += 1
         self.events.append({
@@ -245,6 +249,8 @@ class _Game:
         for _ in range(int(rng.poisson(rate))):
             loser = 200 if rng.random() < _sigmoid(self.blue_edge()) else 100
             victim = self._pick_victim(loser)
+            if victim is None:
+                continue
             isolated = rng.random() < self.profiles[victim].isolation
             where = self.home[victim] if self.minute < 15 else self._fight_spot()
             self._kill(victim, self._when(2_000, 2_000), self._jitter(where, 600), isolated)
@@ -259,7 +265,9 @@ class _Game:
         for i in range(int(rng.integers(3, 7))):
             winning_side = 100 if winner_is_blue else 200
             loser = 300 - winning_side if rng.random() < 0.72 else winning_side
-            self._kill(self._pick_victim(loser), start + i * 2_500, self._jitter(spot, 400), False)
+            victim = self._pick_victim(loser)
+            if victim is not None:
+                self._kill(victim, start + i * 2_500, self._jitter(spot, 400), False)
         for p in PIDS:
             if rng.random() < 0.8:
                 self.positions[p] = self._jitter(spot, 600)
@@ -360,6 +368,7 @@ class _Game:
             self.tick = int(rng.integers(60_500, 71_000)) if self.uneven_frames else MINUTE_MS
         self.events = []
         self.deaths_now = {100: 0, 200: 0}
+        self.dead_now = set()
         spread = 900 if self.minute > 14 else 400
         self.positions = {p: self._jitter(self.home[p], spread) for p in PIDS}
         self.positions.update(self.pending_positions)
