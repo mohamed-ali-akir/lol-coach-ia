@@ -21,7 +21,15 @@ dependencies = [
 mysql = ["pymysql>=1.1"]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
 claude = ["anthropic>=1.0"]
-dev = ["pytest>=8", "ruff>=0.6", "fastapi>=0.110", "uvicorn>=0.29", "anthropic>=1.0"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "anthropic>=1.0",
+    "pymysql>=1.1",
+]
 
 [project.scripts]
 lolcoach-collecte = "lolcoach.collecte.cli:main"
@@ -39,6 +47,15 @@ lolcoach = ["migrations/*.py", "migrations/*.mako", "migrations/versions/*.py"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+# Bibliothèques sans annotations de types complètes.
+module = ["sklearn.*", "anthropic.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100

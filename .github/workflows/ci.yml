@@ -4,10 +4,15 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  # Style, types et tests, sur la plus ancienne et la plus récente version de Python prises en charge.
   tests:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.13"]
     steps:
@@ -18,4 +23,55 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - run: ruff check .
+      - run: mypy
       - run: pytest -q
+
+  # Les mêmes tests sur MariaDB : la compatibilité MySQL annoncée est vérifiée, pas supposée.
+  mariadb:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+        env:
+          LOLCOACH_TEST_DATABASE_URL: mysql+pymysql://root:ci@127.0.0.1:3306/
+
+  # Versions figées (requirements-lock.txt) : la combinaison connue pour fonctionner reste testée,
+  # même si une dépendance publie une version qui casse le projet.
+  versions-figees:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e ".[dev]" -c requirements-lock.txt
+      - run: pytest -q
+
+  # Le paquet installé hors du dépôt contient tout (migrations comprises) et la démo tourne de bout en bout.
+  paquet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install build && python -m build --wheel
+      - run: pip install dist/*.whl
+      - run: cd "$RUNNER_TEMP" && lolcoach-demo --parties 300 --dossier demo

@@ -3,13 +3,19 @@ __pycache__/
 *.py[cod]
 .venv/
 *.egg-info/
+build/
+dist/
+.mypy_cache/
 .pytest_cache/
 .ruff_cache/
 
 # Secrets
 .env
 
-# Données et modèles (volumineux, régénérables)
+# Données, modèles et démo (volumineux, régénérables) ; donnees/ contient aussi le jeton de l'API
 donnees/
 modeles/
+demo/
 *.db
+*.db-wal
+*.db-shm

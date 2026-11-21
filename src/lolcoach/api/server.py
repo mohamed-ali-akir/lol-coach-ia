@@ -16,11 +16,11 @@ import os
 import secrets
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 from sqlalchemy import Engine
 
-from lolcoach.api.app import SyncFunction, create_app
 from lolcoach.archive import RawArchive
 from lolcoach.coach.llm import LLMError, provider_from_env
 from lolcoach.coach.service import Coach
@@ -28,6 +28,9 @@ from lolcoach.collecte import pipeline
 from lolcoach.config import Config, ConfigError, load_config, models_dir
 from lolcoach.db import init_db
 from lolcoach.riot import RiotClient
+
+if TYPE_CHECKING:
+    from lolcoach.api.app import SyncFunction
 
 DEFAULT_PORT = 8765
 DEFAULT_TOKEN_FILE = "donnees/api-token"
@@ -72,7 +75,12 @@ def build_sync(config: Config, engine: Engine) -> SyncFunction | None:
 def main(argv: list[str] | None = None) -> None:
     import argparse
 
-    import uvicorn
+    try:
+        import uvicorn
+
+        from lolcoach.api.app import create_app
+    except ImportError:
+        sys.exit('L\'API demande des modules en option : pip install "lolcoach[api]"')
 
     parser = argparse.ArgumentParser(prog="lolcoach-api", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
