@@ -1,4 +1,4 @@
-"""Modèle n°1 : prédire l'équipe gagnante à partir de la draft (les 10 champions).
+"""Modèle de draft : prédire l'équipe gagnante à partir des 10 champions.
 
 Représentation : un vecteur avec une case par champion, qui vaut +1 si le champion
 est chez les bleus, -1 s'il est chez les rouges, 0 sinon. Une régression logistique
@@ -12,19 +12,25 @@ les plus anciennes et on évalue sur les plus récentes, comme en conditions ré
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import joblib
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 from sqlalchemy import Engine, select
 
 from lolcoach.db import matches, participants
+from lolcoach.modele.logistic import (
+    ArtifactError,
+    LogisticModel,
+    evaluate,
+    fit_logistic,
+    load_artifact,
+    now_iso,
+    save_artifact,
+)
 
 MIN_MATCHES = 50
+KIND = "draft"
 
 
 @dataclass
@@ -36,41 +42,55 @@ class Draft:
     blue_win: bool
 
 
+def _encode(index: dict[int, int], blue: list[int], red: list[int]) -> np.ndarray:
+    x = np.zeros(len(index))
+    for champ in blue:
+        if champ in index:
+            x[index[champ]] += 1
+    for champ in red:
+        if champ in index:
+            x[index[champ]] -= 1
+    return x
+
+
 @dataclass
 class DraftModel:
-    model: LogisticRegression
-    champion_index: dict[int, int]
+    model: LogisticModel
     champion_names: dict[int, str]
     metrics: dict[str, float] = field(default_factory=dict)
     trained_at: str = ""
 
-    def encode(self, blue: list[int], red: list[int]) -> np.ndarray:
-        x = np.zeros(len(self.champion_index))
-        for champ in blue:
-            if champ in self.champion_index:
-                x[self.champion_index[champ]] += 1
-        for champ in red:
-            if champ in self.champion_index:
-                x[self.champion_index[champ]] -= 1
-        return x
+    def __post_init__(self) -> None:
+        self._index = {int(name): i for i, name in enumerate(self.model.features)}
 
     def predict_blue_win(self, blue: list[int], red: list[int]) -> float:
-        """Probabilité que l'équipe bleue gagne."""
-        return float(self.model.predict_proba(self.encode(blue, red).reshape(1, -1))[0, 1])
+        """Probabilité que l'équipe bleue gagne. Un champion inconnu du modèle compte pour 0."""
+        return float(self.model.predict_proba(_encode(self._index, blue, red))[0])
 
     def champion_strength(self) -> list[tuple[str, float]]:
         """Champions classés du plus fort au plus faible selon le modèle."""
-        coefs = self.model.coef_[0]
-        ranked = sorted(self.champion_index.items(), key=lambda kv: coefs[kv[1]], reverse=True)
-        return [(self.champion_names.get(cid, str(cid)), float(coefs[i])) for cid, i in ranked]
+        ranked = sorted(self._index.items(), key=lambda kv: self.model.coef[kv[1]], reverse=True)
+        return [(self.champion_names.get(cid, str(cid)), float(self.model.coef[i]))
+                for cid, i in ranked]
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self, path)
+        save_artifact(path, KIND, {
+            "trained_at": self.trained_at,
+            "metrics": self.metrics,
+            "champion_names": {str(k): v for k, v in self.champion_names.items()},
+            "model": self.model.to_dict(),
+        })
 
     @staticmethod
     def load(path: Path) -> DraftModel:
-        return joblib.load(path)
+        data = load_artifact(path, KIND)
+        try:
+            names = {int(k): str(v) for k, v in data["champion_names"].items()}
+            return DraftModel(LogisticModel.from_dict(data["model"]), names,
+                              {k: float(v) for k, v in data["metrics"].items()},
+                              str(data.get("trained_at", "")))
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise ArtifactError(f"{path} : modèle de draft illisible ({exc!r})") from exc
 
 
 def load_drafts(engine: Engine, patch: str | None = None) -> tuple[list[Draft], dict[int, str]]:
@@ -118,38 +138,26 @@ def train_draft_model(
     champions = sorted({c for d in drafts for c in d.blue + d.red})
     index = {champ: i for i, champ in enumerate(champions)}
 
-    result = DraftModel(
-        model=LogisticRegression(C=regularization, max_iter=2000),
-        champion_index=index,
-        champion_names=champion_names,
-    )
-    x = np.array([result.encode(d.blue, d.red) for d in drafts])
+    x = np.array([_encode(index, d.blue, d.red) for d in drafts])
     y = np.array([d.blue_win for d in drafts], dtype=int)
-
     split = int(len(drafts) * (1 - test_ratio))
     x_train, x_test, y_train, y_test = x[:split], x[split:], y[:split], y[split:]
-    if len(set(y_train)) < 2:
-        raise ValueError("Les parties d'entraînement n'ont qu'un seul vainqueur possible.")
 
-    result.model.fit(x_train, y_train)
-    proba = result.model.predict_proba(x_test)[:, 1]
-
+    model = fit_logistic(x_train, y_train, [str(c) for c in champions], regularization,
+                         standardize=False)
+    scores = evaluate(y_test, model.predict_proba(x_test))
     # Référence naïve : toujours prédire le taux de victoire du côté bleu observé à l'entraînement.
-    blue_rate = float(y_train.mean())
-    baseline = np.full(len(y_test), blue_rate)
+    baseline = evaluate(y_test, np.full(len(y_test), float(y_train.mean())))
 
-    result.metrics = {
+    metrics = {
         "parties_entrainement": float(len(y_train)),
         "parties_test": float(len(y_test)),
-        "precision": float(accuracy_score(y_test, proba >= 0.5)),
-        "precision_reference": float(accuracy_score(y_test, baseline >= 0.5)),
-        "log_loss": float(log_loss(y_test, proba, labels=[0, 1])),
-        "log_loss_reference": float(log_loss(y_test, baseline, labels=[0, 1])),
+        **{k: v for k, v in scores.items() if k != "n"},
+        "precision_reference": baseline["precision"],
+        "log_loss_reference": baseline["log_loss"],
     }
-    if len(set(y_test)) == 2:
-        result.metrics["roc_auc"] = float(roc_auc_score(y_test, proba))
-    result.trained_at = datetime.now(UTC).isoformat(timespec="seconds")
-    return result
+    return DraftModel(model, {c: champion_names.get(c, str(c)) for c in champions}, metrics,
+                      now_iso())
 
 
 def describe(model: DraftModel, top: int = 10) -> dict[str, Any]:

@@ -1,7 +1,18 @@
+import threading
+
 import httpx
 import pytest
 
-from lolcoach.riot import RateLimiter, RiotClient, RiotNotFound
+from lolcoach.riot import (
+    RateLimiter,
+    RiotAuthError,
+    RiotClient,
+    RiotError,
+    RiotNotFound,
+    parse_rate_limits,
+)
+
+PUUID = "p" * 40
 
 
 class FakeClock:
@@ -29,12 +40,40 @@ def test_rate_limiter_waits_when_window_full():
     assert clock.now == pytest.approx(10.0)
 
 
-def make_client(handler, sleeps=None):
+def test_rate_limiter_keeps_history_when_limits_change():
+    clock = FakeClock()
+    limiter = RateLimiter([(100, 1.0)], clock=clock, sleep=clock.sleep)
+    for _ in range(3):
+        limiter.acquire()
+    limiter.set_limits([(3, 10.0)])  # limites réelles apprises après coup
+    limiter.acquire()
+    assert clock.now == pytest.approx(10.0)
+
+
+def test_rate_limiter_is_thread_safe():
+    limiter = RateLimiter([(1000, 60.0)])
+    threads = [threading.Thread(target=lambda: [limiter.acquire() for _ in range(100)])
+               for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(limiter._calls[0]) == 800
+
+
+def test_parse_rate_limits():
+    assert parse_rate_limits("20:1,100:120") == [(20, 1.0), (100, 120.0)]
+    assert parse_rate_limits(None) is None
+    assert parse_rate_limits("n'importe quoi") is None
+    assert parse_rate_limits("0:1") is None
+
+
+def make_client(handler, sleeps=None, adaptive=False, **kwargs):
     sleeps = sleeps if sleeps is not None else []
     http = httpx.Client(transport=httpx.MockTransport(handler))
-    no_limit = RateLimiter([(1000, 1.0)])
-    return RiotClient("RGAPI-test", "euw1", "europe", http=http, limiter=no_limit,
-                      sleep=sleeps.append)
+    limiter = None if adaptive else RateLimiter([(1000, 1.0)])
+    return RiotClient("RGAPI-test", "euw1", "europe", http=http, limiter=limiter,
+                      sleep=sleeps.append, **kwargs)
 
 
 def test_client_sends_key_and_uses_regional_route():
@@ -45,10 +84,38 @@ def test_client_sends_key_and_uses_regional_route():
         return httpx.Response(200, json={"puuid": "abc"})
 
     client = make_client(handler)
-    assert client.account_by_riot_id("Mon Pseudo", "EUW")["puuid"] == "abc"
+    assert client.account_by_riot_id("Mon Pseudo/..", "EU W")["puuid"] == "abc"
     assert seen[0].headers["X-Riot-Token"] == "RGAPI-test"
     assert seen[0].url.host == "europe.api.riotgames.com"
-    assert seen[0].url.raw_path.endswith(b"/by-riot-id/Mon%20Pseudo/EUW")
+    # Le pseudo est encodé : il ne peut pas modifier le chemin de la requête.
+    assert seen[0].url.raw_path.endswith(b"/by-riot-id/Mon%20Pseudo%2F../EU%20W")
+
+
+def test_client_routes_and_params():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return httpx.Response(200, json=[])
+
+    client = make_client(handler)
+    client.match_ids(PUUID, count=500, start_time=1234)
+    client.timeline("EUW1_42")
+    client.league_entries_by_puuid(PUUID)
+    assert dict(seen[0].params) == {"queue": "420", "start": "0", "count": "100",
+                                    "startTime": "1234"}
+    assert seen[1].path == "/lol/match/v5/matches/EUW1_42/timeline"
+    assert seen[2].host == "euw1.api.riotgames.com"
+    assert seen[2].path == f"/lol/league/v4/entries/by-puuid/{PUUID}"
+
+
+def test_client_rejects_suspicious_identifiers():
+    client = make_client(lambda request: httpx.Response(200, json={}))
+    for bad in ("../../etc/passwd", "EUW1_1/../x", "", "euw1_1"):
+        with pytest.raises(ValueError):
+            client.match(bad)
+    with pytest.raises(ValueError):
+        client.match_ids("trop-court")
 
 
 def test_client_retries_after_429():
@@ -62,11 +129,73 @@ def test_client_retries_after_429():
 
     sleeps: list[float] = []
     client = make_client(handler, sleeps)
-    assert client.match_ids("puuid") == ["EUW1_1"]
+    assert client.match_ids(PUUID) == ["EUW1_1"]
     assert sleeps == [3.0]
+
+
+def test_client_retries_network_errors_then_gives_up():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("réseau coupé")
+
+    sleeps: list[float] = []
+    client = make_client(handler, sleeps, max_retries=2)
+    with pytest.raises(RiotError, match="injoignable"):
+        client.match("EUW1_1")
+    assert len(sleeps) == 2 and all(0 < s <= 300 for s in sleeps)
+
+
+def test_client_gives_up_on_persistent_server_errors():
+    sleeps: list[float] = []
+    client = make_client(lambda request: httpx.Response(503), sleeps, max_retries=1)
+    with pytest.raises(RiotError, match="503"):
+        client.match("EUW1_1")
+    assert len(sleeps) == 1
+
+
+def test_retry_after_is_capped():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        headers = {"Retry-After": "999999"}
+        return httpx.Response(429, headers=headers) if calls["n"] == 1 else httpx.Response(
+            200, json={})
+
+    sleeps: list[float] = []
+    make_client(handler, sleeps).match("EUW1_1")
+    assert sleeps == [300.0]
 
 
 def test_client_raises_not_found():
     client = make_client(lambda request: httpx.Response(404))
     with pytest.raises(RiotNotFound):
         client.match("EUW1_404")
+
+
+def test_expired_key_gives_a_clear_error_without_retry():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(403)
+
+    client = make_client(handler)
+    with pytest.raises(RiotAuthError, match="expirée"):
+        client.match("EUW1_1")
+    assert calls["n"] == 1
+
+
+def test_invalid_json_is_a_riot_error():
+    client = make_client(lambda request: httpx.Response(200, content=b"<html>"))
+    with pytest.raises(RiotError, match="illisible"):
+        client.match("EUW1_1")
+
+
+def test_client_learns_app_and_method_limits_from_headers():
+    headers = {"X-App-Rate-Limit": "500:10,30000:600", "X-Method-Rate-Limit": "2000:10"}
+    client = make_client(lambda request: httpx.Response(200, json={}, headers=headers),
+                         adaptive=True)
+    client.match("EUW1_1")
+    assert client._limiter._limits == [(500, 10.0), (30000, 600.0)]
+    assert client._method_limiters["match.by-id"]._limits == [(2000, 10.0)]
+    assert "match.timeline" not in client._method_limiters

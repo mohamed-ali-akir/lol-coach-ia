@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pytest
 from conftest import make_match
@@ -5,6 +7,7 @@ from conftest import make_match
 from lolcoach import db
 from lolcoach.collecte.parse import parse_match
 from lolcoach.modele.draft import DraftModel, load_drafts, train_draft_model
+from lolcoach.modele.logistic import ArtifactError
 
 
 def synthetic_matches(n: int, seed: int = 0):
@@ -44,12 +47,17 @@ def test_model_learns_champion_strength(engine, tmp_path):
     strong, weak = [26, 27, 28, 29, 30], [1, 2, 3, 4, 5]
     assert model.predict_blue_win(strong, weak) > 0.8
     assert model.predict_blue_win(weak, strong) < 0.2
+    # Un champion sorti après l'entraînement est simplement ignoré.
+    assert model.predict_blue_win([999, 27, 28, 29, 30], weak) > 0.5
 
-    path = tmp_path / "draft.joblib"
+    path = tmp_path / "draft.json"
     model.save(path)
-    assert DraftModel.load(path).predict_blue_win(strong, weak) == pytest.approx(
+    assert json.loads(path.read_text(encoding="utf-8"))["kind"] == "draft"  # du JSON lisible
+    restored = DraftModel.load(path)
+    assert restored.predict_blue_win(strong, weak) == pytest.approx(
         model.predict_blue_win(strong, weak)
     )
+    assert restored.champion_strength()[0][0] == strength[0][0]
 
 
 def test_refuses_too_few_matches(engine):
@@ -57,3 +65,10 @@ def test_refuses_too_few_matches(engine):
     drafts, names = load_drafts(engine)
     with pytest.raises(ValueError, match="au moins"):
         train_draft_model(drafts, names)
+
+
+def test_corrupted_model_file_is_rejected(tmp_path):
+    path = tmp_path / "draft.json"
+    path.write_text(json.dumps({"format": 1, "kind": "draft", "model": {}}), encoding="utf-8")
+    with pytest.raises(ArtifactError):
+        DraftModel.load(path)

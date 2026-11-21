@@ -1,12 +1,20 @@
-"""Client minimal de l'API Riot, avec respect des limites de débit.
+"""Client de l'API Riot : limites de débit, nouvelles tentatives, erreurs explicites.
 
-Limites d'une clé de développement : 20 requêtes / 1 s et 100 requêtes / 2 min.
-Le client attend tout seul quand il approche d'une limite, et respecte l'en-tête
-Retry-After si Riot renvoie quand même une erreur 429.
+Principes pour durer :
+- les limites de débit sont lues dans les en-têtes de Riot (elles diffèrent selon le
+  type de clé), avec celles d'une clé de développement comme point de départ ;
+- toute valeur insérée dans une URL est validée, puis encodée ;
+- les erreurs passagères (429, 5xx, réseau) sont retentées avec une attente bornée ;
+- tous les chemins d'API sont regroupés ici : si Riot change de version, un seul
+  fichier est à modifier.
 """
 
 from __future__ import annotations
 
+import logging
+import random
+import re
+import threading
 import time
 from collections import deque
 from collections.abc import Callable
@@ -15,44 +23,106 @@ from urllib.parse import quote
 
 import httpx
 
+log = logging.getLogger(__name__)
+
 DEV_KEY_LIMITS: list[tuple[int, float]] = [(20, 1.0), (100, 120.0)]
 
 RANKED_SOLO_QUEUE_ID = 420
 RANKED_SOLO_QUEUE = "RANKED_SOLO_5x5"
 
+MAX_RETRY_WAIT_S = 300.0  # on n'attend jamais plus longtemps entre deux tentatives
+WINDOW_MARGIN_S = 0.1  # marge : nos fenêtres ne sont pas parfaitement calées sur celles de Riot
 
-class RiotNotFound(Exception):
+PUUID_RE = re.compile(r"^[A-Za-z0-9_-]{20,100}$")
+MATCH_ID_RE = re.compile(r"^[A-Z0-9]{2,8}_[0-9]{1,20}$")
+LIMIT_RE = re.compile(r"^(\d+):(\d+)$")
+
+
+class RiotError(Exception):
+    """Erreur de l'API Riot."""
+
+
+class RiotNotFound(RiotError):
     """La ressource demandée n'existe pas (404)."""
 
 
+class RiotAuthError(RiotError):
+    """Clé refusée (401 / 403) : absente, invalide ou expirée."""
+
+
+def validate_puuid(puuid: str) -> str:
+    if not PUUID_RE.fullmatch(puuid):
+        raise ValueError("puuid invalide")
+    return puuid
+
+
+def validate_match_id(match_id: str) -> str:
+    if not MATCH_ID_RE.fullmatch(match_id):
+        raise ValueError(f"identifiant de partie invalide : {match_id!r}")
+    return match_id
+
+
+def parse_rate_limits(header: str | None) -> list[tuple[int, float]] | None:
+    """'20:1,100:120' -> [(20, 1.0), (100, 120.0)]. None si l'en-tête est absent ou illisible."""
+    if not header:
+        return None
+    limits = []
+    for part in header.split(","):
+        found = LIMIT_RE.fullmatch(part.strip())
+        if not found or int(found[1]) < 1 or int(found[2]) < 1:
+            return None
+        limits.append((int(found[1]), float(found[2])))
+    return limits or None
+
+
 class RateLimiter:
-    """Fenêtres glissantes : au plus `count` appels sur `window` secondes, pour chaque limite."""
+    """Fenêtres glissantes : au plus `count` appels sur `window` secondes, pour chaque limite.
+
+    Utilisable depuis plusieurs fils d'exécution (l'API web partage un seul client).
+    """
 
     def __init__(
         self,
         limits: list[tuple[int, float]],
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        margin: float = 0.0,
     ) -> None:
-        self._limits = limits
-        self._calls: list[deque[float]] = [deque() for _ in limits]
         self._clock = clock
         self._sleep = sleep
+        self._margin = margin
+        self._lock = threading.Lock()
+        self._limits: list[tuple[int, float]] = []
+        self._calls: list[deque[float]] = []
+        self.set_limits(limits)
+
+    def set_limits(self, limits: list[tuple[int, float]]) -> None:
+        """Remplace les limites en conservant l'historique des appels récents."""
+        limits = sorted(set(limits), key=lambda limit: limit[1])
+        with self._lock:
+            if limits == self._limits:
+                return
+            # Chaque appel est noté dans toutes les fenêtres : la plus remplie les contient tous.
+            history = list(max(self._calls, key=len, default=()))
+            self._limits = limits
+            self._calls = [deque(history) for _ in limits]
 
     def acquire(self) -> None:
-        while True:
-            now = self._clock()
-            wait = 0.0
-            for (count, window), calls in zip(self._limits, self._calls, strict=True):
-                while calls and calls[0] <= now - window:
-                    calls.popleft()
-                if len(calls) >= count:
-                    wait = max(wait, calls[0] + window - now)
-            if wait <= 0:
-                for calls in self._calls:
-                    calls.append(now)
-                return
-            self._sleep(wait)
+        with self._lock:
+            while True:
+                now = self._clock()
+                wait = 0.0
+                for (count, window), calls in zip(self._limits, self._calls, strict=True):
+                    span = window + self._margin
+                    while calls and calls[0] <= now - span:
+                        calls.popleft()
+                    if len(calls) >= count:
+                        wait = max(wait, calls[0] + span - now)
+                if wait <= 0:
+                    for calls in self._calls:
+                        calls.append(now)
+                    return
+                self._sleep(wait)
 
 
 class RiotClient:
@@ -64,35 +134,98 @@ class RiotClient:
         http: httpx.Client | None = None,
         limiter: RateLimiter | None = None,
         sleep: Callable[[float], None] = time.sleep,
-        max_retries: int = 3,
+        max_retries: int = 4,
     ) -> None:
         self._platform_url = f"https://{platform}.api.riotgames.com"
         self._region_url = f"https://{region}.api.riotgames.com"
-        self._http = http or httpx.Client(timeout=10.0)
+        # Pas de suivi des redirections : la clé ne doit jamais partir vers un autre hôte.
+        self._http = http or httpx.Client(timeout=15.0, follow_redirects=False)
         self._headers = {"X-Riot-Token": api_key}
-        self._limiter = limiter or RateLimiter(DEV_KEY_LIMITS, sleep=sleep)
+        self._adaptive = limiter is None
+        self._limiter = limiter or RateLimiter(DEV_KEY_LIMITS, sleep=sleep, margin=WINDOW_MARGIN_S)
+        # Riot limite aussi chaque type de requête séparément : un limiteur par méthode,
+        # créé à la première réponse qui annonce ses limites.
+        self._method_limiters: dict[str, RateLimiter] = {}
         self._sleep = sleep
         self._max_retries = max_retries
 
-    def _get(self, url: str, params: dict[str, Any] | None = None) -> Any:
+    def close(self) -> None:
+        self._http.close()
+
+    def __enter__(self) -> RiotClient:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def _backoff(self, attempt: int, retry_after: str | None = None) -> float:
+        if retry_after:
+            try:
+                return min(max(float(retry_after), 0.0), MAX_RETRY_WAIT_S)
+            except ValueError:
+                pass
+        # Attente exponentielle avec part d'aléatoire, pour ne pas retenter tous en même temps.
+        return min(2.0**attempt + random.uniform(0.0, 1.0), MAX_RETRY_WAIT_S)
+
+    def _learn_limits(self, method: str, headers: httpx.Headers) -> None:
+        app_limits = parse_rate_limits(headers.get("X-App-Rate-Limit"))
+        if app_limits:
+            self._limiter.set_limits(app_limits)
+        method_limits = parse_rate_limits(headers.get("X-Method-Rate-Limit"))
+        if method_limits:
+            limiter = self._method_limiters.setdefault(
+                method, RateLimiter(method_limits, sleep=self._sleep, margin=WINDOW_MARGIN_S)
+            )
+            limiter.set_limits(method_limits)
+
+    def _get(self, method: str, url: str, params: dict[str, Any] | None = None) -> Any:
         for attempt in range(self._max_retries + 1):
+            last_attempt = attempt == self._max_retries
+            method_limiter = self._method_limiters.get(method)
+            if method_limiter is not None:
+                method_limiter.acquire()
             self._limiter.acquire()
-            resp = self._http.get(url, headers=self._headers, params=params)
-            if resp.status_code == 404:
-                raise RiotNotFound(url)
-            retryable = resp.status_code == 429 or resp.status_code >= 500
-            if retryable and attempt < self._max_retries:
-                retry_after = resp.headers.get("Retry-After")
-                self._sleep(float(retry_after) if retry_after else 2.0**attempt)
+            try:
+                resp = self._http.get(url, headers=self._headers, params=params)
+            except httpx.TransportError as exc:
+                if last_attempt:
+                    raise RiotError(f"API Riot injoignable : {type(exc).__name__}") from exc
+                self._sleep(self._backoff(attempt))
                 continue
-            resp.raise_for_status()
-            return resp.json()
+
+            if self._adaptive:
+                self._learn_limits(method, resp.headers)
+
+            status = resp.status_code
+            if status == 404:
+                raise RiotNotFound(url)
+            if status in (401, 403):
+                raise RiotAuthError(
+                    "Clé Riot refusée : elle est absente, invalide ou expirée "
+                    "(une clé de développement expire au bout de 24 h)."
+                )
+            if status == 429 or status >= 500:
+                if last_attempt:
+                    raise RiotError(f"L'API Riot répond {status} malgré plusieurs tentatives.")
+                wait = self._backoff(attempt, resp.headers.get("Retry-After"))
+                log.warning("API Riot : réponse %d, nouvelle tentative dans %.0f s", status, wait)
+                self._sleep(wait)
+                continue
+            if status >= 400:
+                raise RiotError(f"L'API Riot a refusé la requête ({status}).")
+            try:
+                return resp.json()
+            except ValueError as exc:
+                raise RiotError("Réponse de l'API Riot illisible.") from exc
         raise AssertionError("inatteignable")
 
     # --- account-v1 (routage régional) ---
     def account_by_riot_id(self, game_name: str, tag_line: str) -> dict[str, Any]:
-        path = f"/riot/account/v1/accounts/by-riot-id/{quote(game_name)}/{quote(tag_line)}"
-        return self._get(self._region_url + path)
+        path = (
+            "/riot/account/v1/accounts/by-riot-id/"
+            f"{quote(game_name, safe='')}/{quote(tag_line, safe='')}"
+        )
+        return self._get("account.by-riot-id", self._region_url + path)
 
     # --- match-v5 (routage régional) ---
     def match_ids(
@@ -101,13 +234,25 @@ class RiotClient:
         queue: int = RANKED_SOLO_QUEUE_ID,
         start: int = 0,
         count: int = 100,
+        start_time: int | None = None,
     ) -> list[str]:
-        path = f"/lol/match/v5/matches/by-puuid/{puuid}/ids"
-        params = {"queue": queue, "start": start, "count": count}
-        return self._get(self._region_url + path, params)
+        """Identifiants des parties, de la plus récente à la plus ancienne.
+
+        `start_time` (secondes depuis 1970) : ne renvoie que les parties plus récentes.
+        """
+        path = f"/lol/match/v5/matches/by-puuid/{validate_puuid(puuid)}/ids"
+        params: dict[str, Any] = {"queue": queue, "start": start, "count": min(count, 100)}
+        if start_time is not None:
+            params["startTime"] = start_time
+        return self._get("match.ids", self._region_url + path, params)
 
     def match(self, match_id: str) -> dict[str, Any]:
-        return self._get(f"{self._region_url}/lol/match/v5/matches/{match_id}")
+        path = f"/lol/match/v5/matches/{validate_match_id(match_id)}"
+        return self._get("match.by-id", self._region_url + path)
+
+    def timeline(self, match_id: str) -> dict[str, Any]:
+        path = f"/lol/match/v5/matches/{validate_match_id(match_id)}/timeline"
+        return self._get("match.timeline", self._region_url + path)
 
     # --- league-v4 (routage plateforme) ---
     def league_entries(
@@ -117,5 +262,10 @@ class RiotClient:
         page: int = 1,
         queue: str = RANKED_SOLO_QUEUE,
     ) -> list[dict[str, Any]]:
-        path = f"/lol/league/v4/entries/{queue}/{tier}/{division}"
-        return self._get(self._platform_url + path, {"page": page})
+        path = f"/lol/league/v4/entries/{quote(queue)}/{quote(tier)}/{quote(division)}"
+        return self._get("league.entries", self._platform_url + path, {"page": page})
+
+    def league_entries_by_puuid(self, puuid: str) -> list[dict[str, Any]]:
+        """Classements d'un joueur (une entrée par file classée)."""
+        path = f"/lol/league/v4/entries/by-puuid/{validate_puuid(puuid)}"
+        return self._get("league.by-puuid", self._platform_url + path)
