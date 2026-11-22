@@ -205,8 +205,13 @@ def test_capture_moments_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(apres_partie.os, "kill", lambda pid, sig: killed.append(pid))
 
     class Lcu:
+        phase = "EndOfGame"
+
         def wait_replay_ready(self, game_id):
             return True
+
+        def gameflow_phase(self):
+            return self.phase
 
         def watch_replay(self, game_id):
             self.watched = game_id
@@ -232,3 +237,8 @@ def test_capture_moments_flow(tmp_path, monkeypatch):
                                             replay_factory=Replay)
     assert lcu.watched == 7 and killed == [99]
     assert captures[0].folder.name == "01m05s"
+    busy = Lcu()
+    busy.phase = "Lobby"
+    with pytest.raises(apres_partie.LcuError, match="occupé"):
+        apres_partie.capture_moments(busy, 7, [], "Ahri", tmp_path, replay_factory=Replay)
+    assert not hasattr(busy, "watched")

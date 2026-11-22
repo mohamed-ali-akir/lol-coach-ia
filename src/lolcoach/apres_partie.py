@@ -49,6 +49,9 @@ FRAMES_PER_MOMENT = 12  # images envoyées à l'IA par moment (sur ~28 capturée
 MATCH_WAIT_S = 900  # une partie apparaît dans l'API Riot quelques minutes après la fin
 REPORTS_DIR = Path("donnees") / "rapports"
 REPLAYS_DIR = Path("donnees") / "replays"
+# Phases du client où il accepte d'ouvrir un replay (vérifié le 22/11/2026 : refus
+# silencieux en salon et en sélection des champions).
+REPLAY_PHASES = frozenset({"None", "PreEndOfGame", "EndOfGame"})
 
 
 @dataclass
@@ -119,6 +122,11 @@ def capture_moments(lcu: LcuClient, game_id: int, moments: list[Moment], champio
     """Ouvre le replay dans le client, capture chaque moment, puis ferme le jeu."""
     if not lcu.wait_replay_ready(game_id):
         raise LcuError("le replay n'a pas pu être téléchargé à temps")
+    # Dans un salon, en file ou en partie, le client ignore la demande sans rien dire.
+    phase = lcu.gameflow_phase()
+    if phase not in REPLAY_PHASES:
+        raise LcuError(f"le client est occupé (phase {phase}) : un replay ne se lance que hors "
+                       "salon et hors partie ; relance l'analyse une fois revenu à l'accueil")
     lcu.watch_replay(game_id)
     captures = []
     with replay_factory() as replay:
