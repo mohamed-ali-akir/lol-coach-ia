@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lol-coach": {
+      "command": "lolcoach-mcp",
+      "args": []
+    }
+  }
+}

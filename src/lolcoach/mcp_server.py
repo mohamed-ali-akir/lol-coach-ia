@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 from lolcoach.analyse.deaths import clock
 from lolcoach.analyse.diagnostic import DiagnosticError
 from lolcoach.analyse.report import ReportError
-from lolcoach.coach.contexte import error_row, report_facts
+from lolcoach.coach.contexte import coaching_context, error_row, report_facts
 from lolcoach.coach.goals import GoalError
 from lolcoach.coach.service import Coach
 from lolcoach.config import ConfigError, database_url, load_config, models_dir
@@ -41,7 +41,8 @@ Tu es le coach League of Legends du joueur. Tu t'appuies UNIQUEMENT sur les donn
 renvoient ces outils : n'invente ni minute, ni chiffre, ni événement.
 
 Pour analyser une partie :
-1. `synchroniser` si le joueur vient de finir une partie, puis `rapport_partie`.
+1. `synchroniser` si le joueur vient de finir une partie, puis `contexte_coaching` (ou
+   `rapport_partie` pour les seuls faits).
 2. `progression_erreurs` : ce qu'il refait, ce qu'il a corrigé (félicite les progrès).
 3. `fiches` sur les thèmes concernés pour appuyer tes conseils, `notes` pour son contexte.
 4. Si tu disposes de captures ou de clips du replay, rattache chaque erreur vue à un code
@@ -151,6 +152,13 @@ class CoachTools:
                 for n in tracking.notes(self.coach.engine, puuid, report.match_id)]
         return data
 
+    def contexte_coaching(self, joueur: str | None = None, partie: str | None = None
+                          ) -> dict[str, Any]:
+        """Tout en un appel : faits, erreurs, progression, notes, fiches utiles, catalogue."""
+        if partie:
+            validate_match_id(partie)
+        return coaching_context(self.coach, self._player(joueur), partie)
+
     def diagnostic(self, joueur: str | None = None, role: str | None = None) -> dict[str, Any]:
         result = self.coach.diagnostic(self._player(joueur), role=role.upper() if role else None)
         return {"texte": result.text}
@@ -255,6 +263,9 @@ def build_server(tools: CoachTools) -> Any:
     register("rapport_partie", "Rapport factuel d'une partie (la dernière par défaut) : moments "
                                "clés, jungle, comparaison aux meilleurs joueurs du champion, "
                                "erreurs repérées, notes du joueur.")
+    register("contexte_coaching", "Tout ce qu'il faut pour coacher une partie en un appel : "
+                                  "faits, erreurs repérées, progression, notes du joueur, "
+                                  "fiches validées utiles, catalogue d'erreurs.")
     register("diagnostic", "Points forts et priorités du joueur sur ses dernières parties.")
     register("progression_erreurs", "Erreurs suivies du joueur : récurrentes, en hausse, "
                                     "nouvelles, en progrès, corrigées.")

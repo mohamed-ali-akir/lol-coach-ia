@@ -230,7 +230,7 @@ def test_coach_tracking_end_to_end(demo_coach, monkeypatch, capsys, tmp_path):
     progress = demo_coach.progression(DEMO_PUUID)
     assert progress.games == analysed
 
-    monkeypatch.setenv("DATABASE_URL", str(demo_coach.engine.url))
+    monkeypatch.setenv("DATABASE_URL", demo_coach.engine.url.render_as_string(hide_password=False))
     monkeypatch.setenv("LOLCOACH_MODELS_DIR", str(tmp_path))
     coach_cli.main(["erreurs", DEMO_PUUID])
     assert "dernières parties analysées" in capsys.readouterr().out

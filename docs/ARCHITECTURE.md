@@ -23,6 +23,16 @@ API Riot ──► collecte ──► base (SQLite / MySQL) ──► analyse �
 | `coach/` | Mise en phrases, modèle de langage facultatif, objectifs, service commun |
 | `api/` | API web locale |
 | `simulation.py`, `demo.py` | Parties simulées au format Riot, pour les tests et la démo |
+| `analyse/jungle.py` | Zones de la carte, pathing, premier clear, présence aux monstres épiques |
+| `analyse/references.py` | Références par champion et par rôle (MASTER et plus), comparaison d'une partie |
+| `suivi/` | Catalogue d'erreurs, détection par règles, stockage (règles et IA), progression |
+| `connaissances.py` | Fiches de connaissances (Markdown + en-tête), recherche |
+| `coach/contexte.py` | Tous les faits d'une partie pour un modèle de langage (MCP et chaîne automatique) |
+| `mcp_server.py` | Serveur MCP (Claude Desktop, Claude Code) |
+| `client_lol/` | API du client LoL (lockfile, fin de partie, replays) et Replay API du jeu |
+| `ia/` | Fournisseurs d'IA (Gemini, `agy`, `claude -p`, API Claude, commande) et consignes |
+| `apres_partie.py`, `auto_cli.py` | Chaîne d'après-partie et surveillance du client |
+| `fiches_cli.py` | Création de fiches à partir de vidéos, validation |
 
 ## Les choix qui comptent
 
@@ -83,6 +93,31 @@ Depuis le patch 16.1, les photos de la timeline sont espacées de 60,5 à 71 sec
 
 Les règles du jeu changent tous les ans. Plutôt que de coder l'heure d'apparition d'un dragon, on regarde ce qui s'est passé : « l'adversaire a pris un objectif dans les 90 secondes après ta mort ». Les rares constantes de jeu restantes sont regroupées et commentées (durée d'effet du Baron dans `modele/winprob.py`, seuils du classement des morts dans `analyse/deaths.py`).
 
+### 8. Des codes d'erreur, pas du texte libre
+
+Pour savoir si un joueur refait une erreur, il faut pouvoir la reconnaître d'une partie à
+l'autre. Chaque erreur a donc un code fixe (`suivi/catalogue.py`) et appartient à un type de
+situation : le taux d'erreur est le nombre d'erreurs rapporté au nombre de fois où la situation
+s'est présentée. Une IA doit choisir dans le catalogue ; une erreur qu'elle croit nouvelle
+devient une proposition, examinée par le joueur. Les règles ont une version (`RULES_VERSION`) :
+la changer fait réanalyser les parties en gardant les avis du joueur.
+
+Les tables du suivi ne pointent pas vers `matches` par clé étrangère : `reimporter` supprime et
+recrée les parties, le suivi doit survivre.
+
+### 9. Les IA sont interchangeables et jamais crues sur parole
+
+Vision (captures du replay) et rédaction passent par deux interfaces minimales
+(`ia/fournisseurs.py`) : changer d'IA est un réglage. Leurs réponses sont extraites (JSON brut,
+bloc de code ou enveloppe de ligne de commande), puis validées par `suivi/store.py` ; un rapport
+rédigé est comparé aux faits et les nombres introuvables sont signalés.
+
+### 10. Le jeu lit le replay, pas nous
+
+Le format `.rofl` est chiffré et change à chaque patch. Le projet ne le décode pas : il demande
+au client LoL d'ouvrir le replay et au jeu d'enregistrer des images (Replay API), ce que Riot
+autorise. Les adresses du client et du jeu sont regroupées dans `client_lol/`.
+
 ## Comment les analyses fonctionnent
 
 ### Repères et diagnostic
@@ -131,7 +166,7 @@ Règle du projet : ne s'appuyer que sur des bibliothèques largement utilisées 
 
 | Bibliothèque | Usage | Étoiles |
 |---|---|---|
-| httpx | appels HTTP (Riot, Ollama) | 15 800 |
+| httpx | appels HTTP (Riot, Ollama, client LoL, Replay API) | 15 800 |
 | SQLAlchemy | base de données | 12 300 |
 | Alembic | migrations | 4 500 |
 | scikit-learn | entraînement des modèles | 68 300 |
@@ -140,6 +175,8 @@ Règle du projet : ne s'appuyer que sur des bibliothèques largement utilisées 
 | FastAPI, uvicorn (option `api`) | API web | 105 000 et 11 100 |
 | SDK Anthropic (option `claude`) | API Claude | 4 100 |
 | PyMySQL (option `mysql`) | MySQL / MariaDB | 7 900 |
+| SDK MCP Python (option `mcp`) | serveur MCP | environ 24 700 |
+| google-genai (option `gemini`) | API Gemini | environ 3 800 |
 | pytest, ruff, mypy (développement) | tests, style, types | 14 700, 51 300, 20 700 |
 
 Aucune bibliothèque Python pour l'API Riot n'atteint ce seuil (Cassiopeia : 581, Riot-Watcher : 555) : le client `riot.py` est donc écrit ici, sur httpx. Il tient en un fichier.

@@ -83,8 +83,9 @@ def _check() -> bool:
     ok = True
     lockfile = read_lockfile()
     if lockfile is None:
-        print("✗ Client LoL : fermé ou introuvable. Dossiers essayés : "
-              + ", ".join(str(d) for d in install_dirs()))
+        tried = ", ".join(str(d) for d in install_dirs()) or "aucun"
+        print(f"✗ Client LoL : fermé ou introuvable (dossiers essayés : {tried}). Lance le "
+              "client, ou indique son dossier dans LOLCOACH_LOL_DIR.")
         ok = False
     else:
         try:

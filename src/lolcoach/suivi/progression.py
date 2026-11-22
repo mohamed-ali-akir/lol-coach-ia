@@ -185,6 +185,12 @@ def progression(engine: Engine, puuid: str) -> Progression:
     return Progression(puuid, len(games), trends)
 
 
+def _games_text(count: int, recent: bool = False) -> str:
+    word = "partie" if count == 1 else "parties"
+    suffix = (" récente" if count == 1 else " récentes") if recent else ""
+    return f"{count} {word}{suffix}"
+
+
 def render_progression(progress: Progression, limit: int = 8) -> list[str]:
     """Texte court, pour le rapport et pour la mémoire du coach."""
     if not progress.trends:
@@ -192,13 +198,20 @@ def render_progression(progress: Progression, limit: int = 8) -> list[str]:
             return [f"Aucune erreur suivie sur tes {progress.games} dernières parties "
                     "analysées."]
         return ["Aucune partie analysée pour l'instant (lolcoach-coach analyser)."]
-    lines = [f"Sur tes {progress.games} dernières parties analysées :"]
+    lines = ["Sur ta dernière partie analysée :" if progress.games == 1 else
+             f"Sur tes {progress.games} dernières parties analysées :"]
     for trend in progress.trends[:limit]:
-        situation = SITUATION_LABELS[trend.situation]
-        detail = (f"{trend.recent_errors} fois sur {trend.recent_situations} {situation} "
-                  "récents")
-        if trend.previous_situations:
-            detail += (f", contre {trend.previous_errors} sur {trend.previous_situations} "
-                       "avant")
+        if trend.situation == GAME:
+            detail = f"{trend.recent_errors} fois en {_games_text(trend.recent_situations, True)}"
+            if trend.previous_situations:
+                detail += (f", contre {trend.previous_errors} en "
+                           f"{_games_text(trend.previous_situations)} avant")
+        else:
+            situation = SITUATION_LABELS[trend.situation]
+            detail = (f"{trend.recent_errors} fois sur {trend.recent_situations} {situation} "
+                      "récents")
+            if trend.previous_situations:
+                detail += (f", contre {trend.previous_errors} sur "
+                           f"{trend.previous_situations} avant")
         lines.append(f"- {STATUS_LABELS[trend.status]} · {trend.label} ({detail}).")
     return lines

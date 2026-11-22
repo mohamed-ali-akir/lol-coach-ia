@@ -30,6 +30,9 @@ def test_report_tool_returns_text_facts_and_errors(tools):
     json.dumps(report)  # tout doit pouvoir passer dans le protocole
     progress = tools.progression_erreurs()
     assert progress["parties_analysees"] >= 1
+    context = tools.contexte_coaching()
+    assert {"faits", "erreurs_reperees", "progression", "fiches", "catalogue"} <= set(context)
+    json.dumps(context)
 
 
 def test_write_tools(tools):
