@@ -59,6 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
                            metavar="1-100")
     p_parties.add_argument("--boule-de-neige", action="store_true",
                            help="ajouter les autres joueurs de chaque partie à la file")
+    p_parties.add_argument("--rang", choices=pipeline.TIERS, type=str.upper,
+                           help="ne traiter que les joueurs de ce rang (ex. PLATINUM)")
     p_parties.add_argument("--rafraichir-apres", type=float, metavar="HEURES",
                            help="reprendre aussi les joueurs traités il y a plus de N heures")
 
@@ -113,7 +115,8 @@ def _run(args: argparse.Namespace) -> None:
         elif args.commande == "parties":
             refresh = None if args.rafraichir_apres is None else int(args.rafraichir_apres * 3600)
             stats = pipeline.collect_matches(client, engine, archive, args.joueurs,
-                                             args.par_joueur, args.boule_de_neige, refresh)
+                                             args.par_joueur, args.boule_de_neige, refresh,
+                                             args.rang)
             print(f"{stats.players} joueurs traités : {_summary(stats)} "
                   f"{stats.new_players} nouveaux joueurs en file.")
         else:

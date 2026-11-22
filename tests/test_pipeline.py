@@ -89,6 +89,15 @@ def test_seed_then_collect(engine):
     assert tiers == {"GOLD"}  # la partie hérite du rang du joueur par lequel on l'a trouvée
 
 
+def test_queue_can_be_limited_to_one_rank(engine):
+    with engine.begin() as conn:
+        db.add_player(conn, "o" * 40, "GOLD", None)
+        db.add_player(conn, "p" * 40, "PLATINUM", None)
+        db.add_player(conn, "s" * 40, None, None)
+        assert [p[0] for p in db.players_to_fetch(conn, 10, tier="PLATINUM")] == ["p" * 40]
+        assert len(db.players_to_fetch(conn, 10)) == 3
+
+
 def test_collect_stores_timeline_and_archive(engine, tmp_path):
     riot = riot_with_simulated(2)
     riot.matches_by_player = {"p1": ["SIM1_1", "SIM1_2"]}

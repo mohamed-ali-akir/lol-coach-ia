@@ -307,6 +307,7 @@ def collect_matches(
     matches_per_player: int = 20,
     snowball: bool = False,
     refresh_after_s: int | None = None,
+    tier: str | None = None,
 ) -> CollectStats:
     """Récupère les dernières parties classées des joueurs en file.
 
@@ -314,12 +315,13 @@ def collect_matches(
     la collecte (Ctrl+C) sans rien perdre.
     Avec `snowball`, les 9 autres joueurs de chaque partie sont ajoutés à la file.
     Avec `refresh_after_s`, les joueurs déjà traités depuis plus longtemps sont repris.
+    Avec `tier`, seuls les joueurs de ce rang sont traités.
     Un joueur que Riot refuse ou qui échoue n'arrête pas la collecte des autres.
     """
     stats = CollectStats()
     retry_pending(client, engine, archive, stats)
     with engine.connect() as conn:
-        queue = db.players_to_fetch(conn, max_players, refresh_after_s)
+        queue = db.players_to_fetch(conn, max_players, refresh_after_s, tier)
 
     failed_players = 0
     for puuid, tier, last_fetched_at in queue:

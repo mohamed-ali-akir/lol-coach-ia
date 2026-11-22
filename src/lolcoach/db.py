@@ -31,6 +31,7 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
+    and_,
     create_engine,
     delete,
     event,
@@ -314,17 +315,19 @@ def get_player(conn: Connection, puuid: str) -> dict[str, Any] | None:
 
 
 def players_to_fetch(
-    conn: Connection, limit: int, refresh_after_s: int | None = None
+    conn: Connection, limit: int, refresh_after_s: int | None = None, tier: str | None = None
 ) -> list[tuple[str, str | None, int | None]]:
     """Joueurs à traiter : (puuid, rang, dernière collecte).
 
     D'abord ceux jamais collectés ; avec `refresh_after_s`, aussi ceux dont la dernière
-    collecte est plus ancienne que ce délai.
+    collecte est plus ancienne que ce délai ; avec `tier`, seulement les joueurs de ce rang.
     """
     condition: ColumnElement[bool] = players.c.last_fetched_at.is_(None)
     if refresh_after_s is not None:
         cutoff = int(time.time()) - refresh_after_s
         condition = or_(condition, players.c.last_fetched_at < cutoff)
+    if tier is not None:
+        condition = and_(condition, players.c.tier == tier)
     query = (
         select(players.c.puuid, players.c.tier, players.c.last_fetched_at)
         .where(condition)
