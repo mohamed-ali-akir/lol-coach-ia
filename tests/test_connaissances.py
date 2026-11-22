@@ -63,3 +63,17 @@ def test_load_search_and_status(tmp_path):
     cards, _ = k.load_cards(tmp_path)
     assert len(k.search(cards, role="JUNGLE")) == 2
     assert k.slugify("Préparer le Baron !") == "preparer-le-baron"
+
+
+def test_auto_validation_setting(monkeypatch):
+    from lolcoach.fiches_cli import cards_from_answer
+
+    answer = {"fiches": [{"titre": "Une fiche", "theme": "ganks",
+                          "contenu": "Un conseil assez long pour passer la validation."}]}
+    monkeypatch.delenv("LOLCOACH_FICHES_AUTO_VALIDER", raising=False)
+    assert cards_from_answer(answer, "youtube:x", "JUNGLE", set())[0].status == "a_valider"
+    for value in ("1", "oui", "TRUE"):
+        monkeypatch.setenv("LOLCOACH_FICHES_AUTO_VALIDER", value)
+        assert cards_from_answer(answer, "youtube:x", "JUNGLE", set())[0].status == "valide"
+    monkeypatch.setenv("LOLCOACH_FICHES_AUTO_VALIDER", "0")
+    assert cards_from_answer(answer, "youtube:x", "JUNGLE", set())[0].status == "a_valider"

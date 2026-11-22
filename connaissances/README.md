@@ -27,6 +27,9 @@ lolcoach-fiches lister --statut a_valider   # relire…
 lolcoach-fiches valider jgl-setup-drake     # …et valider
 ```
 
+Pour ne pas relire : `LOLCOACH_FICHES_AUTO_VALIDER=1` dans `.env`. Les fiches créées par
+`lolcoach-fiches` ou par le relais arrivent alors directement « valide ».
+
 ### Fiches privées
 
 Ce dépôt est public. Les fiches tirées d'une formation payante ou privée vont dans

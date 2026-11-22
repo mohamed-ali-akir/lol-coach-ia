@@ -30,6 +30,7 @@ from lolcoach.connaissances import (
     ROLES,
     STATUSES,
     TO_VALIDATE,
+    VALID,
     Card,
     KnowledgeError,
     load_cards,
@@ -60,6 +61,13 @@ def youtube_id(url: str) -> str:
     return found.group(1)
 
 
+def new_card_status() -> str:
+    """Statut des fiches créées par une IA : « à valider » par défaut ; « valide » tout de
+    suite si LOLCOACH_FICHES_AUTO_VALIDER=1 (le joueur choisit de ne pas relire)."""
+    auto = os.environ.get("LOLCOACH_FICHES_AUTO_VALIDER", "").strip().lower()
+    return VALID if auto in ("1", "oui", "true", "yes") else TO_VALIDATE
+
+
 def cards_from_answer(answer: dict[str, Any], source: str, default_role: str,
                       existing: set[str]) -> list[Card]:
     """Fiches tirées d'une réponse JSON d'IA ({"fiches": [...]}), validées une à une."""
@@ -67,6 +75,7 @@ def cards_from_answer(answer: dict[str, Any], source: str, default_role: str,
     if not isinstance(raw_cards, list):
         raise KnowledgeError("réponse sans liste « fiches »")
     cards = []
+    status = new_card_status()
     for raw in raw_cards[:MAX_CARDS]:
         if not isinstance(raw, dict):
             continue
@@ -88,7 +97,7 @@ def cards_from_answer(answer: dict[str, Any], source: str, default_role: str,
             card_id, n = f"{base}-{n}", n + 1
         existing.add(card_id)
         cards.append(Card(id=card_id, title=title, role=role, theme=theme, body=body[:4000],
-                          status=TO_VALIDATE, champions=champions, source=source[:200]))
+                          status=status, champions=champions, source=source[:200]))
     if not cards:
         raise KnowledgeError("aucune fiche exploitable dans la réponse")
     return cards
@@ -129,7 +138,10 @@ def _save(cards: list[Card]) -> None:
     for card in cards:
         path = write_card(card)
         print(f"+ {card.id} ({card.theme}) : {card.title}  →  {path}")
-    print(f"\n{len(cards)} fiche(s) à relire, puis : lolcoach-fiches valider <id>")
+    if all(card.status == VALID for card in cards):
+        print(f"\n{len(cards)} fiche(s) validée(s) d'office (LOLCOACH_FICHES_AUTO_VALIDER).")
+    else:
+        print(f"\n{len(cards)} fiche(s) à relire, puis : lolcoach-fiches valider <id>")
 
 
 def build_parser() -> argparse.ArgumentParser:
