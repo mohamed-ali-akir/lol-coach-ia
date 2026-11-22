@@ -9,6 +9,12 @@ Exemples (le puuid est affiché par « lolcoach-collecte joueur ») :
     lolcoach-coach objectifs PUUID --proposer
     lolcoach-coach objectifs PUUID --creer cs_per_min --cible 6,5 --sur 10
     lolcoach-coach objectifs PUUID --abandonner 3
+    lolcoach-coach analyser PUUID                # repère les erreurs des dernières parties
+    lolcoach-coach erreurs PUUID                 # progression : erreurs récurrentes, corrigées…
+    lolcoach-coach erreurs PUUID --partie EUW1_7123456789
+    lolcoach-coach erreurs PUUID --contester 12  # « ce n'était pas une erreur »
+    lolcoach-coach note PUUID "j'ai gank top car Renekton à 2 PV" --partie EUW1_… --minute 8:10
+    lolcoach-coach catalogue                     # les erreurs suivies et leurs codes
 
 --ia ajoute « le mot du coach », écrit par le modèle de langage choisi dans LOLCOACH_LLM.
 """
@@ -21,6 +27,7 @@ from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 
+from lolcoach.analyse.deaths import clock
 from lolcoach.analyse.diagnostic import DiagnosticError
 from lolcoach.analyse.metrics import METRICS, ROLE_LABELS, ROLES
 from lolcoach.analyse.report import ReportError
@@ -31,6 +38,9 @@ from lolcoach.config import database_url, models_dir
 from lolcoach.db import init_db
 from lolcoach.modele.logistic import ArtifactError
 from lolcoach.riot import validate_match_id, validate_puuid
+from lolcoach.suivi import store as tracking
+from lolcoach.suivi.catalogue import CATALOGUE, SITUATION_LABELS
+from lolcoach.suivi.progression import render_progression
 
 
 def _number(text: str) -> float:
@@ -71,6 +81,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_goals.add_argument("--cible", type=_number, help="valeur à atteindre (défaut : conseillée)")
     p_goals.add_argument("--sur", type=int, default=10, metavar="PARTIES")
     p_goals.add_argument("--historique", action="store_true", help="inclure les objectifs clos")
+
+    p_track = sub.add_parser("analyser", help="repérer les erreurs du catalogue dans les "
+                                              "dernières parties")
+    p_track.add_argument("puuid")
+    p_track.add_argument("--parties", type=int, default=20, choices=range(1, 201),
+                         metavar="1-200")
+    p_track.add_argument("--tout-refaire", action="store_true",
+                         help="réanalyser même les parties déjà analysées")
+
+    p_errors = sub.add_parser("erreurs", help="progression : erreurs récurrentes, corrigées…")
+    p_errors.add_argument("puuid")
+    p_errors.add_argument("--partie", help="lister les erreurs d'une partie")
+    opinion = p_errors.add_mutually_exclusive_group()
+    opinion.add_argument("--contester", type=int, metavar="NUMERO",
+                         help="ce n'était pas une erreur : elle ne comptera plus")
+    opinion.add_argument("--confirmer", type=int, metavar="NUMERO")
+    opinion.add_argument("--propositions", action="store_true",
+                         help="erreurs proposées par l'IA, hors catalogue")
+
+    p_note = sub.add_parser("note", help="ajouter du contexte que le coach ne peut pas deviner")
+    p_note.add_argument("puuid")
+    p_note.add_argument("texte")
+    p_note.add_argument("--partie")
+    p_note.add_argument("--minute", help="ex. 14:20")
+
+    sub.add_parser("catalogue", help="les erreurs suivies et leurs codes")
     return parser
 
 
@@ -83,13 +119,64 @@ def _show(result: TextResult) -> None:
         print(f"\n(Pas de mot du coach : {result.note}.)", file=sys.stderr)
 
 
+def _print_catalogue() -> None:
+    for error in CATALOGUE:
+        how = "timeline" if error.detected_by == "regle" else "IA (vidéo)"
+        roles = "tous rôles" if len(error.roles) == 5 else ", ".join(
+            ROLE_LABELS[r] for r in error.roles)
+        print(f"{error.code:<26} {error.label} [{how}, {roles}, par "
+              f"{SITUATION_LABELS[error.situation]}]")
+
+
+def _run_tracking(coach: Coach, args: argparse.Namespace) -> None:
+    if args.commande == "analyser":
+        done = coach.track(args.puuid, args.parties, args.tout_refaire)
+        print(f"{done} partie(s) analysée(s).")
+        print("\n".join(render_progression(coach.progression(args.puuid))))
+    elif args.commande == "note":
+        if args.partie:
+            validate_match_id(args.partie)
+        note_id = tracking.add_note(coach.engine, args.puuid, args.texte, args.partie,
+                                    args.minute)
+        print(f"Note n° {note_id} enregistrée.")
+    elif args.contester is not None or args.confirmer is not None:
+        number = args.contester if args.contester is not None else args.confirmer
+        done = tracking.set_opinion(coach.engine, args.puuid, number, args.contester is None)
+        print("Avis enregistré." if done else "Aucune erreur avec ce numéro.")
+    elif args.propositions:
+        found = tracking.proposals(coach.engine, args.puuid)
+        if not found:
+            print("Aucune proposition en attente.")
+        for p in found:
+            print(f"n° {p['id']} {p['label']} ({p['source']}) : {p['description']}")
+    elif args.partie:
+        validate_match_id(args.partie)
+        errors = tracking.match_errors(coach.engine, args.puuid, args.partie)
+        if not errors:
+            print("Aucune erreur enregistrée pour cette partie (lolcoach-coach analyser).")
+        for e in errors:
+            minute = "" if e["ts_ms"] is None else clock(e["ts_ms"])
+            opinion = {None: "", True: " [confirmée]", False: " [contestée]"}[e["confirmed"]]
+            print(f"n° {e['id']:<5} {minute:>6}  {e['code']:<26} ({e['source']}){opinion}")
+    else:
+        print("\n".join(render_progression(coach.progression(args.puuid), limit=20)))
+
+
+TRACKING_COMMANDS = ("analyser", "erreurs", "note")
+
+
 def _run(args: argparse.Namespace) -> None:
     load_dotenv()
+    if args.commande == "catalogue":
+        _print_catalogue()
+        return
     validate_puuid(args.puuid)
     coach = Coach(init_db(database_url()), models_dir(),
                   provider_from_env() if getattr(args, "ia", False) else None)
 
-    if args.commande == "diagnostic":
+    if args.commande in TRACKING_COMMANDS:
+        _run_tracking(coach, args)
+    elif args.commande == "diagnostic":
         _show(coach.diagnostic(args.puuid, args.parties, args.role, args.ia))
     elif args.commande == "rapport":
         if args.partie:
@@ -128,7 +215,8 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     try:
         _run(args)
-    except (ArtifactError, DiagnosticError, ReportError, GoalError, LLMError, ValueError) as exc:
+    except (ArtifactError, DiagnosticError, ReportError, GoalError, LLMError,
+            ValueError) as exc:  # TrackingError est une ValueError
         sys.exit(f"Erreur : {exc}")
 
 

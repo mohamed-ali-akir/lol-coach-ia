@@ -30,6 +30,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Table,
+    Text,
     UniqueConstraint,
     create_engine,
     delete,
@@ -184,6 +185,96 @@ goals = Table(
     Column("status", String(12), nullable=False),
     Column("closed_at", BigInteger, nullable=True),
     Column("final_value", Double, nullable=True),
+)
+
+
+# --- Suivi des erreurs (révision 0005) ---
+# Ces tables ne pointent pas vers `matches` par clé étrangère : le suivi d'un joueur doit
+# survivre à un `reimporter`, qui supprime puis recrée les parties.
+
+# Une ligne par partie analysée et par joueur : évite de refaire l'analyse, et permet de la
+# refaire quand la version des règles change.
+error_analyses = Table(
+    "error_analyses",
+    metadata,
+    Column("match_id", String(32), primary_key=True),
+    Column("puuid", String(78), primary_key=True),
+    Column("game_creation", BigInteger, nullable=False, index=True),  # ms depuis 1970
+    Column("role", String(16), nullable=False),
+    Column("rules_version", Integer, nullable=False),
+    Column("analysed_at", BigInteger, nullable=False),  # secondes depuis 1970
+)
+
+# Chaque fois qu'une situation s'est présentée (un objectif, une partie, un moment analysé
+# en vidéo), bien jouée ou non : c'est le dénominateur des taux d'erreur.
+situations = Table(
+    "situations",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("match_id", String(32), nullable=False),
+    Column("puuid", String(78), nullable=False),
+    Column("type", String(24), nullable=False),
+    Column("ts_ms", Integer, nullable=True),
+    Column("outcome", String(8), nullable=False),  # « ok » ou « erreur »
+    Column("source", String(16), nullable=False),  # « regle » ou « ia »
+    Column("detail", String(200), nullable=True),
+    Index("ix_situations_puuid_match", "puuid", "match_id"),
+)
+
+error_occurrences = Table(
+    "error_occurrences",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("situation_id", Integer, ForeignKey("situations.id"), nullable=True),
+    Column("match_id", String(32), nullable=False),
+    Column("puuid", String(78), nullable=False),
+    Column("code", String(40), nullable=False),
+    Column("ts_ms", Integer, nullable=True),
+    Column("cost_points", Double, nullable=True),  # points de probabilité de victoire
+    Column("confidence", Double, nullable=True),  # 0 à 1, pour une détection par l'IA
+    Column("source", String(40), nullable=False),  # « regle », « gemini:… », « claude:… »
+    Column("evidence", Text, nullable=True),  # JSON : faits, chemins des captures
+    Column("confirmed", Boolean, nullable=True),  # avis du joueur : vide, oui ou non
+    Column("created_at", BigInteger, nullable=False),
+    Index("ix_error_occurrences_puuid_code", "puuid", "code"),
+)
+
+# Erreur repérée par une IA mais absente du catalogue : jamais ajoutée toute seule.
+error_proposals = Table(
+    "error_proposals",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("puuid", String(78), nullable=False),
+    Column("match_id", String(32), nullable=True),
+    Column("label", String(120), nullable=False),
+    Column("description", Text, nullable=False),
+    Column("source", String(40), nullable=False),
+    Column("status", String(12), nullable=False),  # a_examiner, acceptee, refusee
+    Column("created_at", BigInteger, nullable=False),
+)
+
+coach_reports = Table(
+    "coach_reports",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("match_id", String(32), nullable=False),
+    Column("puuid", String(78), nullable=False),
+    Column("author", String(60), nullable=False),  # « regles », « claude-code », « gemini:… »
+    Column("prompt_version", String(20), nullable=True),
+    Column("text", Text, nullable=False),
+    Column("created_at", BigInteger, nullable=False),
+    Index("ix_coach_reports_puuid_match", "puuid", "match_id"),
+)
+
+player_notes = Table(
+    "player_notes",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("puuid", String(78), nullable=False, index=True),
+    Column("match_id", String(32), nullable=True),
+    Column("ts_ms", Integer, nullable=True),
+    Column("text", Text, nullable=False),
+    Column("created_at", BigInteger, nullable=False),
 )
 
 

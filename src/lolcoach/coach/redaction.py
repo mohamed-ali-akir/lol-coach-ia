@@ -147,7 +147,8 @@ def render_focus(finding: Finding) -> list[str]:
 
 
 def render_report(report: MatchReport, focus: Finding | None = None,
-                  goal_lines: list[str] | None = None) -> str:
+                  goal_lines: list[str] | None = None,
+                  progress_lines: list[str] | None = None) -> str:
     """Rapport d'après-partie. `focus` est la priorité actuelle du joueur (issue du
     diagnostic) ; `goal_lines` décrit l'avancement de ses objectifs."""
     result = "victoire" if report.win else "défaite"
@@ -193,6 +194,8 @@ def render_report(report: MatchReport, focus: Finding | None = None,
         lines += ["", "Ton axe de travail du moment", *render_focus(focus)]
     if goal_lines:
         lines += ["", "Tes objectifs", *goal_lines]
+    if progress_lines:
+        lines += ["", "Tes erreurs suivies", *progress_lines]
 
     lines += ["", DISCLAIMER]
     return "\n".join(lines)
