@@ -165,7 +165,12 @@ def resolve_command(name: str, os_name: str = os.name) -> str:
     except OSError as exc:
         raise AIError(f"{name} : script {path} illisible ({exc})") from exc
     for match in _SHIM_TARGET_RE.finditer(script):
-        target = path.parent / match.group(1)
+        # Chemin écrit avec des « \ » : découpé à la main, pour que le test tourne aussi sous
+        # Linux (CI), et sans remonter au-dessus du dossier du script.
+        parts = [part for part in match.group(1).split("\\") if part]
+        if not parts or any(part in (".", "..") for part in parts):
+            continue
+        target = path.parent.joinpath(*parts)
         if target.is_file():
             return str(target)
     raise AIError(f"{name} est un script {path.suffix} ({path}) dont l'exécutable n'a pas été "

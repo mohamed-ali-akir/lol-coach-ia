@@ -142,3 +142,13 @@ def test_prompts_mention_catalogue_and_data():
     assert "OBJ_ABSENT" not in prompt  # repérée par règle, pas par l'IA
     assert '"kda"' in report_prompt({"kda": [1, 2]})
     assert "https://youtu.be/x" in cards_prompt("JUNGLE", "https://youtu.be/x")
+
+
+def test_npm_shim_cannot_point_outside_its_folder(tmp_path, monkeypatch):
+    shim = tmp_path / "bin" / "claude.cmd"
+    shim.parent.mkdir()
+    (tmp_path / "evil.exe").write_bytes(b"")
+    shim.write_text('"%dp0%\\..\\evil.exe" %*\r\n', encoding="utf-8")
+    monkeypatch.setattr(f.shutil, "which", lambda name: str(shim))
+    with pytest.raises(f.AIError, match="exécutable"):
+        f.resolve_command("claude", os_name="nt")
