@@ -75,6 +75,33 @@ def test_command_failure():
         f.CommandProvider("commande-qui-n-existe-pas-xyz {prompt}")
 
 
+NPM_SHIM = ('@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\n'
+            'SETLOCAL\r\nCALL :find_dp0\r\n'
+            '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*\r\n')
+
+
+def test_resolve_command_windows_npm_shim(tmp_path, monkeypatch):
+    shim = tmp_path / "claude.cmd"
+    shim.write_text(NPM_SHIM, encoding="utf-8")
+    exe = tmp_path / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    monkeypatch.setattr(f.shutil, "which", lambda name: str(shim))
+    assert f.resolve_command("claude", os_name="nt") == str(exe)
+    assert f.resolve_command("claude", os_name="posix") == "claude"
+    exe.unlink()  # script sans exécutable : erreur claire plutôt que de passer par cmd.exe
+    with pytest.raises(f.AIError, match="exécutable"):
+        f.resolve_command("claude", os_name="nt")
+
+
+def test_resolve_command_windows_exe_kept(tmp_path, monkeypatch):
+    exe = tmp_path / "agy.exe"
+    monkeypatch.setattr(f.shutil, "which", lambda name: str(exe))
+    assert f.resolve_command("agy", os_name="nt") == str(exe)
+    monkeypatch.setattr(f.shutil, "which", lambda name: None)
+    assert f.resolve_command("absent", os_name="nt") == "absent"
+
+
 def test_providers_from_env(monkeypatch):
     monkeypatch.delenv("LOLCOACH_VISION", raising=False)
     assert f.vision_from_env() is None

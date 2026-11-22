@@ -142,7 +142,39 @@ def extract_text(stdout: str) -> str:
 Runner = Callable[[list[str], float], subprocess.CompletedProcess[str]]
 
 
+_SHIM_TARGET_RE = re.compile(r'"%dp0%\\([^"%]+\.exe)"', re.IGNORECASE)
+
+
+def resolve_command(name: str, os_name: str = os.name) -> str:
+    """Programme réellement lançable pour `name`.
+
+    Sous Windows, `claude` ou `agy` installés par npm sont des scripts `.cmd` : un appel
+    sans interpréteur de commandes échoue (« fichier introuvable »), et passer par `cmd.exe`
+    ferait interpréter `&`, `|` ou `%` contenus dans la consigne. On lance donc directement
+    l'exécutable que le script npm appelle. Ailleurs, le nom est gardé tel quel."""
+    if os_name != "nt":
+        return name
+    found = shutil.which(name)
+    if found is None:
+        return name
+    path = Path(found)
+    if path.suffix.lower() not in (".cmd", ".bat"):
+        return found
+    try:
+        script = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise AIError(f"{name} : script {path} illisible ({exc})") from exc
+    for match in _SHIM_TARGET_RE.finditer(script):
+        target = path.parent / match.group(1)
+        if target.is_file():
+            return str(target)
+    raise AIError(f"{name} est un script {path.suffix} ({path}) dont l'exécutable n'a pas été "
+                  "trouvé : indique le chemin d'un .exe dans LOLCOACH_REDACTEUR_CMD ou "
+                  "LOLCOACH_VISION_CMD")
+
+
 def _run(args: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+    args = [resolve_command(args[0]), *args[1:]]
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout,
                           encoding="utf-8", errors="replace", check=False)
 
