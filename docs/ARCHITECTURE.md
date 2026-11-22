@@ -63,13 +63,15 @@ Un fichier `pickle` exécute du code à l'ouverture et n'est relisible qu'avec l
 
 ### 5. Les faits d'abord, le texte ensuite
 
-`analyse/report.py` ne produit que des données vérifiables. `coach/redaction.py` les met en phrases, de façon entièrement déterminée : mêmes données, même texte. Un modèle de langage peut réécrire ce texte (`coach/llm.py`), sous trois garde-fous :
+`analyse/report.py` ne produit que des données vérifiables. `coach/redaction.py` les met en phrases, de façon entièrement déterminée : mêmes données, même texte. Un modèle de langage peut y ajouter « le mot du coach », quelques phrases placées après ce texte (`coach/llm.py`), sous trois garde-fous :
 
 1. il ne reçoit que le texte factuel, sans pseudo ni donnée brute ; le nom du champion est nettoyé ;
-2. sa réponse est rejetée si elle contient un nombre ou une minute absents du texte factuel (signe compris), des chiffres regroupés autrement, une évolution « de X % à Y % » qui n'existe pas dans ce sens, un lien, ou une longueur anormale ;
-3. toute panne, tout refus ou tout rejet rend le texte factuel.
+2. son message est rejeté s'il dépasse une centaine de mots ou contient un nombre ou une minute absents du texte factuel (signe compris), des chiffres regroupés autrement, une évolution « de X % à Y % » qui n'existe pas dans ce sens, ou un lien ;
+3. toute panne, tout refus ou tout rejet rend le texte factuel seul.
 
-Ce que la vérification ne voit pas : un nombre écrit en toutes lettres, ou deux chiffres exacts intervertis hors du cas « de X % à Y % ». Le texte factuel reste donc la référence.
+Le modèle ne réécrit jamais le rapport. Ce choix vient d'un essai avec de vrais modèles locaux : chargé de réécrire tout le rapport, un modèle de 3 milliards de paramètres était rejeté une fois sur deux et, quand il passait, pouvait écrire un contresens sans aucun chiffre faux. Une vérification automatique sait contrôler des chiffres, pas le sens d'une phrase : les faits restent donc hors de portée du modèle, et son message, court, est affiché à côté d'eux. L'essai a aussi montré qu'un exemple chiffré dans la consigne finit recopié dans la réponse : la consigne n'en contient plus (un test le vérifie).
+
+Ce que la vérification ne voit pas : un nombre écrit en toutes lettres, ou une phrase fausse sans chiffre. Le texte factuel, affiché juste au-dessus, fait foi.
 
 Le projet ne dépend donc jamais d'un modèle de langage pour fonctionner.
 
@@ -151,7 +153,7 @@ Même en local, une API sans protection est exposée : n'importe quelle page web
 - la vérification de l'en-tête `Host` (attaque par « DNS rebinding »), IPv6 compris ; hors du PC, les noms acceptés sont à déclarer (`LOLCOACH_API_ALLOWED_HOSTS`) ;
 - aucune autorisation CORS ;
 - des entrées validées par des formats stricts, des corps de requête qui refusent les champs inconnus ;
-- un plafond horaire de réécritures par le modèle de langage, et une seule synchronisation Riot à la fois ;
+- un plafond horaire d'appels au modèle de langage, et une seule synchronisation Riot à la fois ;
 - un refus de démarrer en écoute hors du PC sans réglage explicite et sans jeton fort ;
 - des erreurs internes sans détail technique.
 

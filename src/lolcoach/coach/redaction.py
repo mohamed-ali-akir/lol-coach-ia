@@ -1,8 +1,8 @@
 """Mise en phrases des analyses, en français, sans modèle de langage.
 
 Ce texte est entièrement déterminé par les faits : mêmes données, même texte. Il sert
-tel quel (gratuit, toujours disponible) et de référence quand un modèle de langage le
-réécrit : tout chiffre absent de ce texte est alors refusé (voir `coach/llm.py`).
+tel quel (gratuit, toujours disponible) et de référence quand un modèle de langage y ajoute
+« le mot du coach » : tout chiffre absent de ce texte y est refusé (voir `coach/llm.py`).
 """
 
 from __future__ import annotations

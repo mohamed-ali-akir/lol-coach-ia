@@ -3,7 +3,7 @@
 Sécurité, par conception :
 - un jeton est exigé sur toutes les routes sauf /health. Même en local c'est nécessaire :
   sans lui, n'importe quelle page web ouverte dans le navigateur pourrait appeler
-  http://127.0.0.1 et déclencher des requêtes Riot ou des réécritures payantes ;
+  http://127.0.0.1 et déclencher des requêtes Riot ou des appels payants à un modèle de langage ;
 - le jeton, l'en-tête Host et la taille de la requête sont vérifiés AVANT que le corps soit
   lu (`_Gate`) : sans jeton, on ne peut ni faire analyser du JSON, ni remplir la mémoire ;
 - l'en-tête Host est vérifié (protection contre le « DNS rebinding ») ;
@@ -147,7 +147,7 @@ class _Gate:
 
 
 class Quota:
-    """Plafond d'appels sur une fenêtre glissante (ex. réécritures payantes par heure)."""
+    """Plafond d'appels sur une fenêtre glissante (ex. appels payants au modèle de langage)."""
 
     def __init__(self, limit: int, window_s: float, clock: Callable[[], float] = time.monotonic
                  ) -> None:
@@ -210,7 +210,7 @@ def create_app(
         if not rewrite or coach.provider is None:
             return rewrite
         if not llm_quota.take():
-            raise HTTPException(429, "Plafond de réécritures par heure atteint.")
+            raise HTTPException(429, "Plafond d'appels au modèle de langage par heure atteint.")
         return True
 
     def error(status: int) -> Callable[[Request, Exception], JSONResponse]:
@@ -281,6 +281,7 @@ def create_app(
         assert found is not None
         return {
             "text": result.text, "rewritten": result.rewritten, "note": result.note,
+            "coach_note": result.coach_note,
             "diagnostic": {
                 **asdict(found),
                 "priorities": [asdict(f) for f in found.priorities],
@@ -292,7 +293,7 @@ def create_app(
         result = coach.report(puuid, match_id, use_llm(rewrite))
         assert result.report is not None
         return {"text": result.text, "rewritten": result.rewritten, "note": result.note,
-                "report": asdict(result.report)}
+                "coach_note": result.coach_note, "report": asdict(result.report)}
 
     @app.get("/players/{puuid}/report")
     def latest_report(puuid: Puuid, rewrite: bool = False) -> dict[str, Any]:

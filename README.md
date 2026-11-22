@@ -78,17 +78,26 @@ lolcoach-api                           # écoute sur http://127.0.0.1:8765
 
 Au premier lancement, un jeton d'accès est écrit dans `donnees/api-token` : colle-le dans l'onglet Coach.
 
-## Réécriture par un modèle de langage (facultatif)
+## Le mot du coach, par un modèle de langage (facultatif)
 
-Tout fonctionne sans : le texte de base est complet et gratuit. Avec `--ia`, un modèle de langage le réécrit de façon plus fluide.
+Tout fonctionne sans : le texte de base est complet et gratuit. Avec `--ia`, un modèle de langage ajoute **après** ce texte quelques phrases de coach (« Le mot du coach »). Les faits ne passent jamais par le modèle : ils restent affichés tels quels.
 
 | `LOLCOACH_LLM` | Coût | Remarques |
 |---|---|---|
 | `aucun` (défaut) | gratuit | texte de base |
-| `ollama` | gratuit | modèle local, [Ollama](https://ollama.com) doit tourner sur ton PC |
+| `ollama` | gratuit | modèle local, [Ollama](https://ollama.com) doit tourner sur ton PC ; modèle par défaut `gemma3:4b` (`ollama pull gemma3:4b`, 3,3 Go) |
 | `claude` | payant | `pip install -e ".[claude]"` et `ANTHROPIC_API_KEY` ; modèle par défaut `claude-opus-5-5`, `LOLCOACH_LLM_MODEL=claude-haiku-5-5` coûte bien moins cher |
 
-Garde-fou : le modèle ne reçoit que le texte factuel, et sa réponse est rejetée si elle contient **un seul nombre ou une seule minute absents des faits** (signe compris), des chiffres regroupés autrement, ou une évolution « de X % à Y % » inversée. En cas de rejet ou de panne, tu obtiens le texte de base. Limite : un nombre écrit en toutes lettres n'est pas vérifié, c'est pourquoi le texte de base reste la référence.
+Garde-fou : le modèle ne reçoit que le texte factuel, et son message est rejeté s'il est trop long ou contient **un seul nombre ou une seule minute absents des faits** (signe compris), des chiffres regroupés autrement, une évolution « de X % à Y % » inversée, ou un lien. En cas de rejet ou de panne, tu obtiens le texte de base seul.
+
+Essai avec de vrais modèles locaux (Ollama 0.40, processeur seul à 4 cœurs, 12 textes de la démo) :
+
+| Modèle | Messages acceptés | Temps par message | Ce qu'on lit |
+|---|---|---|---|
+| `gemma3:4b` | 12 sur 12 | 12 à 16 s | conseils clairs, quelques maladresses de français |
+| `llama3.2` (3 milliards de paramètres) | 11 sur 12 | 8 à 15 s | plus vague, parfois confus ; le message rejeté recopiait le rapport |
+
+Limite : un petit modèle peut écrire une phrase approximative, voire contraire aux faits, sans aucun chiffre faux, et aucune vérification automatique ne le détecte. C'est la raison pour laquelle le modèle n'écrit qu'un court message et jamais le rapport lui-même : la première version, qui faisait réécrire tout le rapport, était rejetée une fois sur deux avec `llama3.2` et laissait passer des contresens (« tu as gagné 1 match sur 5 » pour un score 1/5/0). **Les chiffres du texte de base font foi.** L'API Claude n'a pas été essayée en conditions réelles.
 
 ## Ce que les modèles savent faire, et leurs limites
 

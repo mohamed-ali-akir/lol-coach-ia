@@ -208,7 +208,7 @@ class EchoProvider:
 
     def complete(self, system, user):
         self.calls += 1
-        return user.split("<compte_rendu>")[1].split("</compte_rendu>")[0].strip()
+        return "Belle partie : garde ce rythme et pense à regarder la carte avant d'avancer."
 
 
 def test_rewrite_quota_protects_against_runaway_costs(demo):
@@ -217,7 +217,10 @@ def test_rewrite_quota_protects_against_runaway_costs(demo):
     url = f"/players/{DEMO_PUUID}/report?rewrite=true"
 
     first = client.get(url, headers=AUTH).json()
-    assert first["rewritten"] is True
+    assert first["rewritten"] is True and first["coach_note"].startswith("Belle partie")
+    assert first["text"].endswith("Le mot du coach\n" + first["coach_note"])
+    assert first["text"].startswith(
+        client.get(f"/players/{DEMO_PUUID}/report", headers=AUTH).json()["text"])
     assert client.get(url, headers=AUTH).status_code == 200
     blocked = client.get(url, headers=AUTH)
     assert blocked.status_code == 429 and provider.calls == 2

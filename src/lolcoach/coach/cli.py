@@ -10,7 +10,7 @@ Exemples (le puuid est affiché par « lolcoach-collecte joueur ») :
     lolcoach-coach objectifs PUUID --creer cs_per_min --cible 6,5 --sur 10
     lolcoach-coach objectifs PUUID --abandonner 3
 
---ia fait réécrire le texte par le modèle de langage choisi dans LOLCOACH_LLM.
+--ia ajoute « le mot du coach », écrit par le modèle de langage choisi dans LOLCOACH_LLM.
 """
 
 from __future__ import annotations
@@ -51,12 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
                         metavar="5-100", help="nombre de parties analysées")
     p_diag.add_argument("--role", choices=ROLES, type=str.upper,
                         help="par défaut : le rôle le plus joué")
-    p_diag.add_argument("--ia", action="store_true", help="réécriture par le modèle de langage")
+    p_diag.add_argument("--ia", action="store_true", help=IA_HELP)
 
     p_report = sub.add_parser("rapport", help="rapport d'après-partie")
     p_report.add_argument("puuid")
     p_report.add_argument("--partie", help="identifiant de la partie (défaut : la dernière)")
-    p_report.add_argument("--ia", action="store_true", help="réécriture par le modèle de langage")
+    p_report.add_argument("--ia", action="store_true", help=IA_HELP)
 
     p_matches = sub.add_parser("parties", help="dernières parties du joueur")
     p_matches.add_argument("puuid")
@@ -74,10 +74,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+IA_HELP = "ajouter le mot du coach, écrit par le modèle de langage"
+
+
 def _show(result: TextResult) -> None:
     print(result.text)
     if result.note:
-        print(f"\n(Texte de base conservé : {result.note}.)", file=sys.stderr)
+        print(f"\n(Pas de mot du coach : {result.note}.)", file=sys.stderr)
 
 
 def _run(args: argparse.Namespace) -> None:

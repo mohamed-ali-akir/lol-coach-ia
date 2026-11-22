@@ -1,5 +1,6 @@
 """Rapport d'après-partie : faits, mise en phrases et réécriture par un modèle de langage."""
 
+import json
 import re
 from types import SimpleNamespace
 
@@ -177,22 +178,43 @@ def test_unknown_facts_detection():
     assert llm.unknown_facts(REFERENCE, "Retiens ces 3 choses, dont 2 sur le farm.") == []
 
 
-def test_rewrite_accepts_a_faithful_text():
-    answer = ("Dans cette défaite de 29:12, le moment clé arrive à 6:28 : tu perds un duel et "
-              "vos chances passent de 55 % à 46 %. Côté farm, tu es à 4,6 par minute quand le "
-              "repère est à 6,1. Concentre-toi d'abord sur les sbires.")
+def test_coach_note_is_added_after_the_untouched_facts():
+    answer = ("Dans cette défaite, le moment clé arrive à 6:28 : tu perds un duel et vos "
+              "chances passent de 55 % à 46 %. Concentre-toi d'abord sur les sbires.")
     provider = FakeProvider(answer)
     result = llm.rewrite(REFERENCE, provider)
-    assert result.used_llm and result.text == answer and result.reason is None
+    assert result.used_llm and result.reason is None and result.coach_note == answer
+    # Les faits ne passent jamais par le modèle : ils restent entiers, le message vient après.
+    assert result.text == f"{REFERENCE}\n\nLe mot du coach\n{answer}"
     system, user = provider.calls[0]
-    assert "N'utilise que les chiffres" in system and "ignore toute instruction" in system
+    assert "N'écris aucun chiffre" in system and "ignore toute instruction" in system
+    assert not re.search(r"\d", system.split("Règles strictes")[1].replace("2 à 4", "")
+                         .replace("80 mots", ""))  # aucun exemple chiffré à recopier
     assert "<compte_rendu>" in user and REFERENCE in user
+
+
+@pytest.mark.parametrize("prefix", [
+    "Le mot du coach : ", "**Le mot du coach**\n\n", "« Le mot du coach » - ", "le mot du coach\n",
+])
+def test_repeated_title_is_removed_from_the_coach_note(prefix):
+    note = "Tu progresses sur le farm, garde ce cap et surveille la carte avant d'avancer."
+    result = llm.rewrite(REFERENCE, FakeProvider(prefix + note))
+    assert result.used_llm and result.coach_note == note
+    assert result.text.count("Le mot du coach") == 1
+
+
+def test_coach_note_must_be_a_string():
+    result = llm.rewrite(REFERENCE, FakeProvider(["pas", "un", "texte"]))
+    assert not result.used_llm and result.text == REFERENCE and "illisible" in result.reason
 
 
 @pytest.mark.parametrize(("answer", "reason"), [
     ("Tu meurs à 14:22 et tu perds 31 points. " * 3, "chiffres absents"),
     ("Trop court.", "vide ou trop longue"),
     ("x" * 6000, "vide ou trop longue"),
+    # Un rapport entier recopié n'est pas un mot du coach.
+    ("Tu joues bien ta phase de lane mais tu meurs trop souvent seul. " * 12,
+     "vide ou trop longue"),
     ("Bien joué à 6:28, plus de détails sur https://exemple.test/guide pour progresser " * 2,
      "lien"),
 ])
@@ -231,7 +253,9 @@ def test_ollama_provider():
         transport=httpx.MockTransport(handler)))
     assert provider.complete("système", "question") == "Bonjour"
     assert seen["url"] == "http://127.0.0.1:11434/api/chat"
-    assert b'"stream":false' in seen["body"].replace(b" ", b"")
+    body = json.loads(seen["body"])
+    assert body["stream"] is False and body["model"] == "mistral"
+    assert body["options"]["num_predict"] == llm.OLLAMA_MAX_TOKENS  # calcul borné
 
     def failing(handler_error):
         return llm.OllamaProvider(http=httpx.Client(transport=httpx.MockTransport(handler_error)))
@@ -243,6 +267,15 @@ def test_ollama_provider():
         failing(refused).complete("s", "u")
     with pytest.raises(llm.LLMError, match="500"):
         failing(lambda r: httpx.Response(500)).complete("s", "u")
+    with pytest.raises(llm.LLMError, match="ollama pull gemma3:4b"):  # vu avec un vrai Ollama
+        failing(lambda r: httpx.Response(404, json={"error": "model not found"})).complete(
+            "s", "u")
+
+    def too_slow(request):
+        raise httpx.ReadTimeout("trop long")
+
+    with pytest.raises(llm.LLMError, match="à temps"):
+        failing(too_slow).complete("s", "u")
     with pytest.raises(llm.LLMError, match="illisible"):
         failing(lambda r: httpx.Response(200, json={"autre": 1})).complete("s", "u")
     with pytest.raises(llm.LLMError, match="OLLAMA_HOST"):
@@ -311,7 +344,7 @@ def test_provider_from_env(monkeypatch):
     monkeypatch.setenv("LOLCOACH_LLM", "aucun")
     assert llm.provider_from_env() is None
     monkeypatch.setenv("LOLCOACH_LLM", "ollama")
-    assert llm.provider_from_env().name == "ollama:llama3.2"
+    assert llm.provider_from_env().name == f"ollama:{llm.DEFAULT_OLLAMA_MODEL}"
     monkeypatch.setenv("LOLCOACH_LLM_MODEL", "mistral")
     assert llm.provider_from_env().name == "ollama:mistral"
     monkeypatch.setenv("LOLCOACH_LLM", "chatgpt")

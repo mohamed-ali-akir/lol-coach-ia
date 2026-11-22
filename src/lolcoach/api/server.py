@@ -8,7 +8,7 @@ Variables d'environnement :
     LOLCOACH_API_ALLOW_REMOTE mettre 1 pour autoriser une écoute hors de ce PC
     LOLCOACH_API_ALLOWED_HOSTS noms ou adresses par lesquels le serveur est joint, séparés par
                               des virgules (obligatoire hors de ce PC : nom du proxy, IP…)
-    LOLCOACH_LLM_MAX_PER_HOUR plafond de réécritures par heure (défaut : 20)
+    LOLCOACH_LLM_MAX_PER_HOUR plafond d'appels au modèle de langage par heure (défaut : 20)
 """
 
 from __future__ import annotations

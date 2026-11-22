@@ -66,9 +66,10 @@ class _Cached(Generic[T]):
 
 @dataclass
 class TextResult:
-    text: str
-    rewritten: bool  # True si le texte vient du modèle de langage
-    note: str | None = None  # pourquoi la réécriture a été refusée, le cas échéant
+    text: str  # texte factuel, suivi du mot du coach s'il y en a un
+    rewritten: bool  # True si un mot du coach (modèle de langage) a été ajouté
+    note: str | None = None  # pourquoi il n'y a pas de mot du coach, le cas échéant
+    coach_note: str | None = None  # le mot du coach seul
 
 
 @dataclass
@@ -104,13 +105,14 @@ class Coach:
     def models_status(self) -> dict[str, bool]:
         return {"reperes": self._benchmarks.available(), "victoire": self._winprob.available()}
 
-    def _finish(self, text: str, use_llm: bool) -> tuple[str, bool, str | None]:
+    def _finish(self, text: str, use_llm: bool) -> tuple[str, bool, str | None, str | None]:
+        """(texte, mot du coach ajouté ?, raison de son absence, mot du coach seul)."""
         if not use_llm:
-            return text, False, None
+            return text, False, None, None
         if self.provider is None:
-            return text, False, "aucun modèle de langage configuré (LOLCOACH_LLM)"
+            return text, False, "aucun modèle de langage configuré (LOLCOACH_LLM)", None
         result = rewrite(text, self.provider)
-        return result.text, result.used_llm, result.reason
+        return result.text, result.used_llm, result.reason, result.coach_note
 
     # --- joueur ---
 
@@ -186,8 +188,8 @@ class Coach:
     def diagnostic(self, puuid: str, n_games: int = 30, role: str | None = None,
                    use_llm: bool = False) -> DiagnosticResult:
         diagnostic = self._diagnose(puuid, n_games, role)
-        text, rewritten, note = self._finish(render_diagnostic(diagnostic), use_llm)
-        return DiagnosticResult(text, rewritten, note, diagnostic)
+        finished = self._finish(render_diagnostic(diagnostic), use_llm)
+        return DiagnosticResult(*finished, diagnostic)
 
     def report(self, puuid: str, match_id: str | None = None, use_llm: bool = False
                ) -> ReportResult:
@@ -210,8 +212,8 @@ class Coach:
             except DiagnosticError:
                 focus = None  # pas assez de parties : le rapport reste valable sans
         goal_lines = goals_module.render_goals(self.goals(puuid))
-        text, rewritten, note = self._finish(render_report(report, focus, goal_lines), use_llm)
-        return ReportResult(text, rewritten, note, report)
+        finished = self._finish(render_report(report, focus, goal_lines), use_llm)
+        return ReportResult(*finished, report)
 
     # --- objectifs ---
 
