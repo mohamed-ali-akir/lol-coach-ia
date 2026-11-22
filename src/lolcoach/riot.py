@@ -128,6 +128,23 @@ class RateLimiter:
             self._limits = limits
             self._calls = [deque(history) for _ in limits]
 
+    def sync_counts(self, counts: list[tuple[int, float]]) -> None:
+        """Se cale sur le décompte que Riot renvoie (en-têtes `X-*-Rate-Limit-Count`).
+
+        Les appels faits par un autre processus avec la même clé (une autre commande lancée
+        juste avant, l'API web) comptent chez Riot mais pas ici : sans ce calage, le premier
+        processus lancé après eux dépasse la limite et reçoit des 429. Les appels manquants sont
+        notés à l'instant présent, ce qui fait attendre un peu plus que nécessaire, jamais moins.
+        """
+        with self._lock:
+            now = self._clock()
+            for (_count, window), calls in zip(self._limits, self._calls, strict=True):
+                span = window + self._margin
+                while calls and calls[0] <= now - span:
+                    calls.popleft()
+                seen = max((n for n, w in counts if w == window), default=0)
+                calls.extend([now] * max(0, seen - len(calls)))
+
     def acquire(self) -> None:
         with self._lock:
             while True:
@@ -194,12 +211,18 @@ class RiotClient:
         app_limits = parse_rate_limits(headers.get("X-App-Rate-Limit"))
         if app_limits:
             self._limiter.set_limits(app_limits)
+        app_counts = parse_rate_limits(headers.get("X-App-Rate-Limit-Count"))
+        if app_counts:
+            self._limiter.sync_counts(app_counts)
         method_limits = parse_rate_limits(headers.get("X-Method-Rate-Limit"))
         if method_limits:
             limiter = self._method_limiters.setdefault(
                 method, RateLimiter(method_limits, sleep=self._sleep, margin=WINDOW_MARGIN_S)
             )
             limiter.set_limits(method_limits)
+            method_counts = parse_rate_limits(headers.get("X-Method-Rate-Limit-Count"))
+            if method_counts:
+                limiter.sync_counts(method_counts)
 
     def _get(self, method: str, url: str, params: dict[str, Any] | None = None) -> Any:
         for attempt in range(self._max_retries + 1):
@@ -231,7 +254,10 @@ class RiotClient:
                 if last_attempt:
                     raise RiotError(f"L'API Riot répond {status} malgré plusieurs tentatives.")
                 wait = self._backoff(attempt, resp.headers.get("Retry-After"))
-                log.warning("API Riot : réponse %d, nouvelle tentative dans %.0f s", status, wait)
+                # application ou method : notre limiteur s'est trompé ; service : surcharge Riot.
+                kind = resp.headers.get("X-Rate-Limit-Type")
+                log.warning("API Riot : réponse %d%s, nouvelle tentative dans %.0f s", status,
+                            f" (limite « {kind} »)" if kind else "", wait)
                 self._sleep(wait)
                 continue
             if status >= 400:

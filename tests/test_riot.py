@@ -201,6 +201,53 @@ def test_client_learns_app_and_method_limits_from_headers():
     assert "match.timeline" not in client._method_limiters
 
 
+def test_rate_limiter_syncs_with_the_count_riot_reports():
+    clock = FakeClock()
+    limiter = RateLimiter([(20, 1.0), (100, 120.0)], clock=clock, sleep=clock.sleep)
+    limiter.acquire()
+    # Riot a vu 98 appels sur 2 minutes : une autre commande vient d'utiliser la même clé.
+    limiter.sync_counts([(1, 1.0), (98, 120.0)])
+    limiter.acquire()
+    limiter.acquire()
+    assert clock.sleeps == []  # 100 appels : la limite est atteinte, pas dépassée
+    limiter.acquire()
+    assert clock.sleeps and sum(clock.sleeps) >= 119  # le 101e attend la fin de la fenêtre
+
+    # Un décompte plus bas que le nôtre ne retire rien (prudence).
+    other = RateLimiter([(3, 10.0)], clock=clock, sleep=clock.sleep)
+    for _ in range(3):
+        other.acquire()
+    other.sync_counts([(0, 10.0)])
+    before = list(clock.sleeps)
+    other.acquire()
+    assert len(clock.sleeps) == len(before) + 1
+
+
+def test_client_follows_riot_counts_across_processes():
+    """Vu sur la vraie API : une commande lancée juste après une autre recevait un 429, car
+    elle ignorait les appels déjà faits avec la même clé."""
+    clock = FakeClock()
+    seen_by_riot = [94]  # appels faits juste avant par une autre commande
+
+    def handler(request):
+        seen_by_riot[0] += 1
+        return httpx.Response(200, json={}, headers={
+            "X-App-Rate-Limit": "20:1,100:120",
+            "X-App-Rate-Limit-Count": f"1:1,{seen_by_riot[0]}:120",
+            "X-Method-Rate-Limit": "2000:10", "X-Method-Rate-Limit-Count": "1:10"})
+
+    client = RiotClient(
+        "RGAPI-test", "euw1", "europe", http=httpx.Client(transport=httpx.MockTransport(handler)),
+        limiter=RateLimiter([(20, 1.0), (100, 120.0)], clock=clock, sleep=clock.sleep),
+        sleep=clock.sleep)
+    client._adaptive = True  # apprend des en-têtes, comme un client créé sans limiteur
+    for _ in range(6):
+        client.match("EUW1_1")
+    assert clock.sleeps == [] and seen_by_riot[0] == 100  # pile la limite, sans la dépasser
+    client.match("EUW1_1")
+    assert sum(clock.sleeps) >= 119  # le suivant attend au lieu de recevoir un 429
+
+
 def test_unexpected_response_shape_is_a_riot_error():
     as_list = make_client(lambda request: httpx.Response(200, json=["pas", "un", "objet"]))
     with pytest.raises(RiotError, match="objet attendu"):
