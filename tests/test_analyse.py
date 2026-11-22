@@ -212,7 +212,18 @@ def test_diagnostic_reliability_levels(demo):
 # Vu sur de vraies parties : un jungler recevait « reviens toujours sur une vague de sbires »
 # et « ne quitte pas ta lane », et une partie jouée top recevait l'axe de travail du jungler.
 
-LANE_WORDS = re.compile(r"\b(vagues?|lane|sbires?)\b|tour adverse")  # « laners » est permis
+# Consignes de laner : pousser ou suivre SA vague, farmer les sbires, rester dans SA lane. Un
+# conseil de jungler peut parler des lanes pour les ganks (« gank les lanes dont la vague… »).
+LANE_WORDS = re.compile(r"\b(ta|sa) vague\b|\bsbires?\b|ne quitte pas ta lane|sous ta tour"
+                        r"|reste (près|à portée) de ta vague|pousse ta|tour adverse")
+OLD_JUNGLE_MISTAKES = (  # conseils reçus par un vrai jungler avant correction
+    "Entre deux actions, reviens toujours sur une vague de sbires plutôt que d'errer.",
+    "Ne quitte pas ta lane quand une vague arrive sous ta tour : chaque vague perdue est un "
+    "niveau de retard.",
+    "Une minute avant l'apparition d'un dragon ou du Baron, pousse ta vague puis rejoins ton "
+    "équipe.",
+    "Ne t'avance pas seul dans une zone sans vision : attends un allié ou reste près de ta vague.",
+)
 
 
 def test_jungle_advice_never_talks_about_lanes_or_waves():
@@ -221,6 +232,7 @@ def test_jungle_advice_never_talks_about_lanes_or_waves():
             continue
         for text in (metric.advice_for("JUNGLE"), metric.drill_for("JUNGLE")):
             assert not LANE_WORDS.search(text.lower()), (metric.key, text)
+    assert all(LANE_WORDS.search(text.lower()) for text in OLD_JUNGLE_MISTAKES)
     assert mt.family_label("lane", "JUNGLE") == "Début de partie"
     assert mt.family_label("lane", "MIDDLE") == "Phase de lane"
     farm = mt.METRICS_BY_KEY["cs_per_min"]

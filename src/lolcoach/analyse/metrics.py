@@ -15,6 +15,7 @@ from sqlalchemy import Engine
 
 from lolcoach import db
 from lolcoach.analyse import deaths as deaths_module
+from lolcoach.analyse import jungle
 from lolcoach.analyse.data import MatchData, iter_matches, match_ids_since, recent_match_ids
 
 ROLES = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
@@ -141,7 +142,20 @@ def _objective_participation(match: MatchData, pid: int) -> float | None:
     return present / len(taken) * 100
 
 
+def _jungle_cs_first_clear(match: MatchData, pid: int) -> float | None:
+    return jungle.jungle_cs_at(match, pid, jungle.FIRST_CLEAR_MS)
+
+
+def _jungle_cs_10(match: MatchData, pid: int) -> float | None:
+    return jungle.jungle_cs_at(match, pid, T10)
+
+
+def _jungle_cs_diff_15(match: MatchData, pid: int) -> float | None:
+    return jungle.jungle_cs_diff(match, pid, T15)
+
+
 FARMERS = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM")
+JUNGLERS = ("JUNGLE",)
 
 METRICS: tuple[Metric, ...] = (
     Metric("cs_per_min", "Farm par minute", "/min", True, _cs_per_min,
@@ -251,6 +265,51 @@ METRICS: tuple[Metric, ...] = (
                          "de l'objectif et préviens ton équipe.",
                          "Garde les minuteurs d'objectifs sous les yeux (touche Tab) et "
                          "organise ton tour de jungle pour finir près du prochain."),)),
+    # --- Propres au jungler ---
+    Metric("jungle_cs_first_clear", "Monstres tués à 3:30 (vitesse du premier clear)", "",
+           True, _jungle_cs_first_clear,
+           "Enchaîne les camps sans détour au premier clear ; ne t'arrête pour un gank avant "
+           "3:30 que si une lane te l'offre vraiment.",
+           "En outil d'entraînement, chronomètre ton premier clear complet sur ton champion "
+           "jusqu'à le faire en moins de 3:15.",
+           roles=JUNGLERS, decimals=0),
+    Metric("jungle_cs_10", "Monstres tués à 10 minutes", "", True, _jungle_cs_10,
+           "Entre deux actions, reprends toujours les camps qui sont réapparus : un jungler "
+           "qui attend en rivière perd de l'or.",
+           "Note l'heure de réapparition de tes camps (2 min 15) et reviens dessus à chaque "
+           "fois pendant 5 parties.",
+           roles=JUNGLERS, decimals=0),
+    Metric("jungle_cs_diff_15", "Écart de monstres à 15 min face au jungler adverse", "",
+           True, _jungle_cs_diff_15,
+           "Joue du côté de ta lane la plus forte et vole les camps du jungler adverse quand "
+           "il se montre de l'autre côté de la carte.",
+           "Revois tes 15 premières minutes : chaque fois que le jungler adverse apparaît sur "
+           "une lane, note le camp qu'il laissait sans défense.",
+           roles=JUNGLERS, decimals=0),
+    Metric("enemy_jungle_pct", "Temps passé dans la jungle adverse (2-14 min)", "%", True,
+           jungle.enemy_jungle_share,
+           "Envahis quand tes lanes ont la priorité et que tu sais où est le jungler adverse.",
+           "Avant chaque invasion, vérifie que deux de tes lanes peuvent te rejoindre.",
+           roles=JUNGLERS, decimals=0),
+    Metric("early_kill_involvement", "Kills et assistances avant 8 minutes", "", True,
+           jungle.early_kill_involvement,
+           "Gank les lanes dont la vague pousse vers ton allié et dont l'adversaire n'a plus "
+           "son sort de fuite.",
+           "Avant chaque gank, vérifie trois choses : vague, sort de fuite adverse, balise.",
+           roles=JUNGLERS, decimals=0),
+    Metric("objective_setup", "Présence 30 s avant les monstres épiques", "%", True,
+           jungle.objective_setup_share,
+           "Sois sur place 30 secondes avant chaque dragon, larves ou Baron, avec une balise "
+           "posée, au lieu d'arriver au moment où il apparaît.",
+           "Pendant 5 parties, annonce chaque objectif 1 minute avant et fais un retour à la "
+           "base 90 s avant pour arriver plein de vie.",
+           roles=JUNGLERS, decimals=0),
+    Metric("epic_control", "Monstres épiques pris par ton équipe", "%", True,
+           jungle.epic_control_share,
+           "Quand tu ne peux pas contester un objectif, prends-en un autre de l'autre côté de "
+           "la carte au même moment.",
+           "Note après chaque partie les objectifs cédés sans contrepartie.",
+           roles=JUNGLERS, decimals=0),
 )
 METRICS_BY_KEY = {m.key: m for m in METRICS}
 
@@ -263,6 +322,7 @@ FAMILY_LABELS = {
     "vision": "Vision",
     "equipe": "Jeu en équipe",
     "combat": "Combat",
+    "jungle": "Jungle",
 }
 FAMILY_OF = {
     "cs_per_min": "farm",
@@ -278,6 +338,13 @@ FAMILY_OF = {
     "damage_share": "combat",
     "vision_per_min": "vision",
     "control_wards": "vision",
+    "jungle_cs_first_clear": "farm",
+    "jungle_cs_10": "farm",
+    "jungle_cs_diff_15": "jungle",
+    "enemy_jungle_pct": "jungle",
+    "early_kill_involvement": "jungle",
+    "objective_setup": "equipe",
+    "epic_control": "jungle",
 }
 
 

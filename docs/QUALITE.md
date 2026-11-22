@@ -75,6 +75,27 @@ D'où le choix : **la stabilité est mesurée à chaque entraînement** et enreg
 
 Sur les 128 joueurs suivis ayant assez de parties à leur poste, 25 n'ont aucune priorité, 51 en ont une, 27 deux, 25 trois. Sur des joueurs simulés tous moyens, 85 % n'en avaient aucune : de vrais joueurs du même rang ont, eux, de vraies forces et faiblesses, ce que confirme le test ci-dessus.
 
+## Statistiques du jungler et zones de la carte
+
+Ajoutées sur une branche parallèle, puis fusionnées et essayées sur les mêmes vraies parties.
+
+- **Farm du jungler** (monstres à 3:30, à 10 min, écart à 15 min) : la donnée nécessaire n'existait pas dans les parties collectées avant. `lolcoach-collecte reimporter` a reconstruit les 1 659 parties depuis l'archive brute en 37 secondes, sans contacter Riot, et l'a remplie partout.
+- **Zones de la carte**, sur de vraies positions (photos réelles, sans interpolation, 800 parties) :
+
+| Moment | Classés au bon endroit | Le reste |
+|---|---|---|
+| Top, 3-5 min | 83,0 % dans sa lane | base 8 %, rivière 7 % |
+| Mid, 3-5 min | 85,5 % | base 8 %, rivière 3 % |
+| ADC, 3-5 min | 81,0 % | rivière 9 %, base 8 % |
+| Support, 3-5 min | 73,1 % | rivière 13 %, base 8 % |
+| Jungler, 1:00 | 87,9 % dans sa jungle | jungle adverse 6 % (invasions) |
+
+Le « reste » correspond à ce qui se passe vraiment : retours à la base, balises en rivière. À 2:00, 18,6 % des junglers sont classés en lane du milieu : vérification faite, ces positions sont entre les deux tours de mid de leur propre équipe, là où un jungler traverse la carte pendant son premier tour de camps. Le classement est juste.
+
+- **Stabilité** : seuls 12 joueurs suivis sont junglers, trop peu pour juger les statistiques propres au jungler (il en faut 20). Elles ne sont donc pas encore filtrées ; la mesure se fera d'elle-même à l'entraînement quand il y aura assez de junglers suivis.
+- **Point d'attention** : en jungle, la statistique qui pèse le plus sur la victoire devient « monstres épiques pris par ton équipe ». C'est en partie un résultat d'équipe ; la comparaison victoires contre victoires et défaites contre défaites en limite l'effet, mais elle mérite d'être relue quand il y aura plus de junglers.
+- **Références par champion** : elles demandent des parties Master et plus, qui n'ont pas été collectées ici.
+
 ## Défauts trouvés grâce à ces données
 
 | Vu sur de vraies parties | Correction |

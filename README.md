@@ -8,6 +8,10 @@ Il fait ce que fait un coach :
 2. **Il montre les moments clés** : chaque mort est classée (pris seul à plusieurs, gank, duel perdu…) et chiffrée en points de probabilité de victoire, **à la minute près**.
 3. **Il donne un conseil et un exercice** pour chaque point faible.
 4. **Il fixe des objectifs** (« 5,3 de farm par minute sur tes 10 prochaines parties ») et vérifie s'ils sont tenus.
+5. **Il te compare aux meilleurs sur ton champion** : or, farm, monstres et zone de la carte minute par minute, chez les joueurs MASTER, GRANDMASTER et CHALLENGER.
+6. **Il analyse ton jungle** : pathing reconstitué, premier clear, présence avant les objectifs, temps dans la jungle adverse, écart avec le jungler adverse.
+7. **Il suit tes erreurs d'une partie à l'autre** : un catalogue de codes fixes, des taux par situation rencontrée, et un statut pour chacune (récurrente, en progrès, corrigée…).
+8. **Il regarde le replay** (facultatif) : après chaque partie, les moments clés sont capturés en images et une IA (Gemini, Claude) y relève les erreurs, puis rédige un rapport de coach. Voir [docs/COACH_IA.md](docs/COACH_IA.md).
 
 Exemple de sortie (`lolcoach-coach rapport`) :
 
@@ -42,8 +46,11 @@ cp .env.example .env                   # puis colle ta clé Riot dedans (develop
 # 0. Vérifier que tout fonctionne avec ta clé (une partie, rien n'est enregistré)
 lolcoach-collecte verifier "TonPseudo#EUW"
 
-# 1. Constituer la base de comparaison : des joueurs de ton rang et leurs parties
+# 1. Constituer la base de comparaison : des joueurs de ton rang et leurs parties…
 lolcoach-collecte classement GOLD II
+# … et les meilleurs joueurs, pour les références par champion (pas de division au sommet)
+lolcoach-collecte classement CHALLENGER
+lolcoach-collecte classement MASTER --max 1000
 lolcoach-collecte parties --joueurs 50 --par-joueur 20 --boule-de-neige
 
 # 2. Tes propres parties (affiche ton identifiant « puuid », à réutiliser ensuite)
@@ -57,6 +64,7 @@ lolcoach-coach diagnostic PUUID
 lolcoach-coach rapport PUUID                       # dernière partie
 lolcoach-coach objectifs PUUID --proposer
 lolcoach-coach objectifs PUUID --creer cs_per_min
+lolcoach-coach erreurs PUUID                       # erreurs récurrentes, corrigées…
 ```
 
 Avec une clé de développement (100 requêtes toutes les 2 minutes, 2 requêtes par partie), on récupère environ **1 400 parties par heure**. La collecte s'interrompt sans perte (Ctrl+C), ne retélécharge jamais une partie connue, et retente toute seule à la collecte suivante une partie dont le téléchargement a échoué.
@@ -68,6 +76,25 @@ Avec une clé de développement (100 requêtes toutes les 2 minutes, 2 requêtes
 Pour construire la base de ton rang : `lolcoach-collecte classement PLATINUM II`, puis `lolcoach-collecte parties --rang PLATINUM --joueurs 30`.
 
 Autres commandes de collecte : `completer` (timelines manquantes), `reimporter` (reconstruit la base depuis l'archive, sans contacter Riot), `parties --rafraichir-apres 24` (reprend les joueurs déjà vus).
+
+## Le coach IA : Claude, Gemini, replay automatique
+
+Tout est décrit dans [docs/COACH_IA.md](docs/COACH_IA.md). En bref :
+
+```bash
+pip install -e ".[mcp,gemini]"
+lolcoach-mcp                         # le coach dans Claude Desktop / Claude Code (ton abonnement)
+lolcoach-auto surveiller --replay    # rapport détaillé après chaque partie, replay compris
+lolcoach-fiches video <lien YouTube> --role JUNGLE   # fiches de connaissances à valider
+```
+
+| Commande | Rôle |
+|---|---|
+| `lolcoach-mcp` | serveur MCP : Claude lit tes parties, tes erreurs et les fiches, puis enregistre son rapport. Skill Claude Code fourni : `/analyse-game` |
+| `lolcoach-auto` | surveille le client LoL ; à chaque fin de partie : collecte, erreurs, captures du replay, analyse par une IA de vision, rapport rédigé |
+| `lolcoach-fiches` | transforme une vidéo éducative en fiches (API Gemini ou appli Gemini), que tu relis et valides |
+
+Les IA possibles : API Gemini (`gemini-4-argon`), Gemini par Google Antigravity (`agy -p`), Claude Code (`claude -p`, abonnement), API Claude, ou toute autre commande. Ce qu'elles renvoient est validé : seuls les codes du catalogue d'erreurs sont acceptés, et un rapport qui cite des nombres absents des données porte la mention « À vérifier ».
 
 ## Dans LoL Companion
 
@@ -110,6 +137,7 @@ L'API Claude n'a pas été appelée avec une vraie clé. Ce qui est vérifié : 
 | Probabilité de victoire | chances de l'équipe à chaque minute, à partir de l'écart d'or, d'XP, des tours, dragons, etc. | sur des parties plus récentes que celles d'entraînement : précision, score de Brier, **calibration** |
 | Repères | répartition de chaque statistique par rang, rôle et résultat | nombre de parties par groupe ; repli sur « tous rangs » si un rang manque de données |
 | Draft | victoire selon les 10 champions | face à une prédiction naïve ; n'est enregistré que s'il fait mieux qu'elle, ce qui demande des dizaines de milliers de parties (pas encore le cas sur 966 vraies parties) |
+| Références par champion | quartiles d'or, d'XP, de farm et de monstres à chaque minute, zone occupée par les junglers, sur les parties MASTER et plus | publiées à partir de 20 parties du champion à ce rôle |
 
 À savoir avant de s'y fier :
 
@@ -129,6 +157,8 @@ L'API Claude n'a pas été appelée avec une vraie clé. Ce qui est vérifié : 
 | Lecture de vraies parties avec une vraie clé | vérifiée : 1 659 parties classées EUW (Argent, Or, Platine) collectées et analysées sans erreur de format ([docs/QUALITE.md](docs/QUALITE.md)) |
 | Mot du coach avec un vrai modèle local (Ollama, `gemma3:4b` et `llama3.2`) | vérifié de bout en bout, LoL Companion compris ; mesures plus haut |
 | Mot du coach avec l'API Claude | requêtes et erreurs vérifiées à travers le vrai SDK, face à un serveur simulé ; **jamais appelée avec une vraie clé** |
+| Client LoL, Replay API, Gemini, `agy`, `claude -p` | vérifiés face à des réponses simulées, d'après la documentation de Riot (Replay API, League Director) et de la communauté (client), et le code des SDK ; **jamais lancés contre un vrai client LoL ni une vraie clé Gemini** : `lolcoach-auto verifier` est le premier test à faire |
+| Zones de la carte (pathing) | approximation géométrique de la Faille, vérifiée sur de vraies positions : à 3-5 min, 81 à 85 % des laners sont classés dans leur lane, le reste étant en base ou en rivière ; à 1:00, 88 % des junglers dans leur jungle ([docs/QUALITE.md](docs/QUALITE.md)) |
 | Qualité des modèles sur de vraies parties | mesurée sur 1 659 parties : probabilité de victoire utile et bien calibrée (73,4 % contre 48,9 %), draft pas encore utile (non enregistré), statistiques du diagnostic stables chez un même joueur, mesure refaite à chaque entraînement ([docs/QUALITE.md](docs/QUALITE.md)). Un seul serveur (EUW) à ce jour |
 
 ## Sécurité et vie privée
@@ -138,6 +168,7 @@ L'API Claude n'a pas été appelée avec une vraie clé. Ce qui est vérifié : 
 - L'API n'écoute que sur ton PC, exige un jeton sur toutes ses routes et le vérifie **avant de lire le corps de la requête** (limité à 16 Ko), vérifie l'en-tête `Host`, n'autorise aucun site web à lire ses réponses, et plafonne les réécritures payantes par heure.
 - Les modèles sont des fichiers **JSON** : pas de fichier binaire exécutable à l'ouverture (pickle).
 - Tout ce qui vient de l'extérieur (réponses de Riot, du modèle de langage, requêtes HTTP) est validé avant usage.
+- Le client LoL et le replay ne sont contactés que sur `127.0.0.1`, avec le seul certificat racine de Riot (fourni) ; les IA en ligne de commande sont lancées sans interpréteur de commandes, la consigne en un seul argument ; leurs réponses n'entrent en base qu'une fois validées (codes du catalogue, minutes, confiance, textes bornés).
 
 Ce projet n'analyse que des parties **terminées**. Un produit public doit être enregistré auprès de Riot et respecter ses [règles développeur](https://developer.riotgames.com/policies/general). LoL Coach IA n'est ni approuvé ni soutenu par Riot Games.
 
@@ -146,7 +177,7 @@ Ce projet n'analyse que des parties **terminées**. Un produit public doit être
 ```bash
 ruff check .          # style
 mypy                  # types, mode strict
-pytest -q             # 193 tests, sans réseau (réponses Riot simulées)
+pytest -q             # 300 tests, sans réseau (réponses Riot, client LoL et IA simulés)
 python benchmarks/mesures.py   # temps de chaque étape, pour vérifier qu'une modification ne ralentit rien
 
 # Les mêmes tests sur MySQL / MariaDB :
@@ -166,6 +197,12 @@ Ordres de grandeur (1 500 parties simulées) : entraînement complet en 3 second
 - [x] Probabilité de victoire et coût de chaque mort
 - [x] Rapport d'après-partie avec les minutes citées
 - [x] Objectifs suivis, API, onglet Coach dans LoL Companion
+- [x] Collecte MASTER, GRANDMASTER, CHALLENGER et références par champion
+- [x] Statistiques et rapport propres au jungler
+- [x] Suivi des erreurs d'une partie à l'autre (catalogue, situations, statuts)
+- [x] Serveur MCP (Claude Desktop, Claude Code) et skill `/analyse-game`
+- [x] Rapport automatique après chaque partie, captures du replay analysées par une IA
+- [x] Fiches de connaissances tirées de vidéos éducatives
 - [ ] Rôles, duos et contres dans le modèle de draft
 - [ ] Conseils avant la partie, pendant la sélection des champions
 - [ ] Analyse du mental : résultats après deux défaites, selon l'heure, selon la longueur de la session

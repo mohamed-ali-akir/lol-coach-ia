@@ -17,18 +17,21 @@ from sqlalchemy import Engine, func, select
 
 from lolcoach import db
 from lolcoach.analyse.benchmarks import Benchmarks
-from lolcoach.analyse.data import player_fingerprint, recent_match_ids
+from lolcoach.analyse.data import iter_matches, player_fingerprint, recent_match_ids
 from lolcoach.analyse.deaths import clock
 from lolcoach.analyse.diagnostic import Diagnostic, DiagnosticError, build_diagnostic
 from lolcoach.analyse.metrics import METRICS_BY_KEY
+from lolcoach.analyse.references import ChampionReferences
 from lolcoach.analyse.report import MatchReport, ReportError, build_report
 from lolcoach.coach import goals as goals_module
 from lolcoach.coach.goals import GoalError, GoalProgress, Proposal
 from lolcoach.coach.llm import Provider, rewrite
 from lolcoach.coach.redaction import render_diagnostic, render_report
-from lolcoach.modele.cli import BENCHMARKS_FILE, WINPROB_FILE
+from lolcoach.modele.cli import BENCHMARKS_FILE, REFERENCES_FILE, WINPROB_FILE
 from lolcoach.modele.logistic import ArtifactError
 from lolcoach.modele.winprob import WinProbModel
+from lolcoach.suivi import store as tracking
+from lolcoach.suivi.progression import Progression, progression, render_progression
 
 T = TypeVar("T")
 
@@ -90,6 +93,7 @@ class Coach:
         folder = Path(models_dir)
         self._benchmarks = _Cached(folder / BENCHMARKS_FILE, Benchmarks.load)
         self._winprob = _Cached(folder / WINPROB_FILE, WinProbModel.load)
+        self._references = _Cached(folder / REFERENCES_FILE, ChampionReferences.load)
         self._diagnostics: OrderedDict[tuple[Any, ...], Diagnostic] = OrderedDict()
         self._diagnostics_lock = threading.Lock()
 
@@ -106,8 +110,13 @@ class Coach:
         model = self._winprob.get()
         return model if model.useful else None
 
+    def references(self) -> ChampionReferences | None:
+        """Facultatif : sans elles, pas de comparaison aux meilleurs joueurs du champion."""
+        return self._references.get() if self._references.available() else None
+
     def models_status(self) -> dict[str, bool]:
-        return {"reperes": self._benchmarks.available(), "victoire": self.winprob() is not None}
+        return {"reperes": self._benchmarks.available(), "victoire": self.winprob() is not None,
+                "references": self._references.available()}
 
     def _finish(self, text: str, use_llm: bool) -> tuple[str, bool, str | None, str | None]:
         """(texte, mot du coach ajouté ?, raison de son absence, mot du coach seul)."""
@@ -206,7 +215,15 @@ class Coach:
                 raise ReportError("Aucune partie exploitable pour ce joueur.")
             match_id = latest[0]
         benchmarks = self.benchmarks() if self._benchmarks.available() else None
-        report = build_report(self.engine, puuid, match_id, benchmarks, self.winprob())
+        report = build_report(self.engine, puuid, match_id, benchmarks, self.winprob(),
+                              self.references())
+        progress_lines = None
+        if report.has_timeline:
+            # Le rapport met à jour le suivi des erreurs : la partie est analysée si besoin.
+            self.track(puuid, match_ids=[match_id])
+            progress = self.progression(puuid)
+            if progress.trends:
+                progress_lines = render_progression(progress, limit=5)
 
         focus = None
         if benchmarks is not None:
@@ -219,8 +236,28 @@ class Coach:
             except DiagnosticError:
                 focus = None  # pas assez de parties : le rapport reste valable sans
         goal_lines = goals_module.render_goals(self.goals(puuid))
-        finished = self._finish(render_report(report, focus, goal_lines), use_llm)
+        text = render_report(report, focus, goal_lines, progress_lines)
+        finished = self._finish(text, use_llm)
         return ReportResult(*finished, report)
+
+    # --- suivi des erreurs ---
+
+    def track(self, puuid: str, n_games: int = 20, force: bool = False,
+              match_ids: list[str] | None = None) -> int:
+        """Repère les erreurs du catalogue dans les dernières parties (ou celles données).
+        Renvoie le nombre de parties (ré)analysées."""
+        references, winprob = self.references(), self.winprob()
+        if match_ids is None:
+            return tracking.analyse_recent(self.engine, puuid, n_games, references, winprob,
+                                           force)
+        done = 0
+        for match in iter_matches(self.engine, match_ids):
+            with self.engine.begin() as conn:
+                done += tracking.analyse_match(conn, match, puuid, references, winprob, force)
+        return done
+
+    def progression(self, puuid: str) -> Progression:
+        return progression(self.engine, puuid)
 
     # --- objectifs ---
 

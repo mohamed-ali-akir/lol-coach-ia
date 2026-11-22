@@ -51,6 +51,8 @@ class MatchData:
     cs: np.ndarray = field(default_factory=lambda: np.zeros((0, 11)))
     x: np.ndarray = field(default_factory=lambda: np.zeros((0, 11)))
     y: np.ndarray = field(default_factory=lambda: np.zeros((0, 11)))
+    # Monstres de la jungle tués. NaN pour une partie collectée avant la révision 0004.
+    jungle_cs: np.ndarray = field(default_factory=lambda: np.zeros((0, 11)))
     events: list[Event] = field(default_factory=list)
     # Calculs faits une seule fois par partie, puis réutilisés pour chacun des 10 joueurs.
     _kills: list[Event] | None = field(default=None, repr=False, compare=False)
@@ -258,7 +260,8 @@ def _load_chunk(conn: Connection, match_ids: list[str], wards: bool = False
     frames = db.participant_frames
     query = (
         select(frames.c.match_id, frames.c.frame, frames.c.participant_id, frames.c.timestamp_ms,
-               frames.c.total_gold, frames.c.xp, frames.c.cs, frames.c.x, frames.c.y)
+               frames.c.total_gold, frames.c.xp, frames.c.cs, frames.c.x, frames.c.y,
+               frames.c.jungle_cs)
         .where(frames.c.match_id.in_(match_ids))
         .order_by(frames.c.match_id)
     )
@@ -266,7 +269,9 @@ def _load_chunk(conn: Connection, match_ids: list[str], wards: bool = False
     if rows:
         # Conversion par blocs : c'est le point chaud de tout entraînement.
         owners = [row[0] for row in rows]
-        numbers = np.array([row[1:] for row in rows], dtype=np.int64)
+        # Colonne vide (partie antérieure à la révision 0004) -> -1, remplacé par NaN plus bas.
+        numbers = np.array([[*row[1:-1], -1 if row[-1] is None else row[-1]] for row in rows],
+                           dtype=np.int64)
         bounds = [0] + [i for i in range(1, len(owners)) if owners[i] != owners[i - 1]]
         bounds.append(len(owners))
         for begin, stop in zip(bounds[:-1], bounds[1:], strict=True):
@@ -281,10 +286,12 @@ def _load_chunk(conn: Connection, match_ids: list[str], wards: bool = False
             n_frames = int(frame.max()) + 1
             ts = np.zeros(n_frames, dtype=np.int64)
             ts[frame] = block[:, 2]
-            series = np.zeros((5, n_frames, 11))
+            series = np.zeros((6, n_frames, 11))
             series[:, frame, pid] = block[:, 3:].T
+            jungle = series[5]
+            jungle[jungle < 0] = np.nan
             match.frame_ts = ts
-            match.gold, match.xp, match.cs, match.x, match.y = series
+            match.gold, match.xp, match.cs, match.x, match.y, match.jungle_cs = series
 
     ev = db.events
     query = select(ev).where(ev.c.match_id.in_(match_ids)).order_by(

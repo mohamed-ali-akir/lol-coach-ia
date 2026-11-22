@@ -136,7 +136,7 @@ class ClaudeProvider:
     """API Claude, via le SDK officiel `anthropic` (pip install "lolcoach[claude]")."""
 
     def __init__(self, model: str = DEFAULT_CLAUDE_MODEL, effort: str = "low",
-                 client: Any = None) -> None:
+                 client: Any = None, max_tokens: int = MAX_OUTPUT_TOKENS) -> None:
         try:
             import anthropic
         except ImportError as exc:
@@ -146,13 +146,14 @@ class ClaudeProvider:
         self._client = client or anthropic.Anthropic(timeout=120.0, max_retries=2)
         self._model = model
         self._effort = effort
+        self._max_tokens = max_tokens
         self.name = f"claude:{model}"
 
     def complete(self, system: str, user: str) -> str:
         anthropic = self._anthropic
         request: dict[str, Any] = {
             "model": self._model,
-            "max_tokens": MAX_OUTPUT_TOKENS,
+            "max_tokens": self._max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": user}],
             # Quelques phrases à écrire : un effort faible suffit et coûte moins cher.

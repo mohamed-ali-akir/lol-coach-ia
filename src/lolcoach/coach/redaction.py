@@ -10,8 +10,9 @@ from __future__ import annotations
 import re
 
 from lolcoach.analyse.diagnostic import Diagnostic, Finding
+from lolcoach.analyse.jungle import ZONE_LABELS
 from lolcoach.analyse.metrics import ROLE_LABELS
-from lolcoach.analyse.report import MatchReport, Moment, StatLine
+from lolcoach.analyse.report import JungleFacts, MatchReport, Moment, StatLine
 
 TIER_LABELS = {
     "IRON": "Fer", "BRONZE": "Bronze", "SILVER": "Argent", "GOLD": "Or",
@@ -100,6 +101,42 @@ def _story(report: MatchReport) -> str | None:
             f"(à {report.low_clock}).")
 
 
+def _count(value: float) -> str:
+    return str(round(value))
+
+
+def render_jungle(facts: JungleFacts, champion: str) -> list[str]:
+    lines = []
+    if facts.start_side:
+        lines.append(f"Départ côté {facts.start_side}.")
+    if facts.first_clear is not None:
+        text = f"Premier clear : {_count(facts.first_clear)} monstres tués à 3:30"
+        if facts.first_clear_ref is not None:
+            text += (f", contre {_count(facts.first_clear_ref)} pour les meilleurs joueurs sur "
+                     f"{_safe_name(champion)}")
+        lines.append(text + ".")
+    if facts.jungle_cs_10 is not None:
+        text = f"À 10 minutes : {_count(facts.jungle_cs_10)} monstres"
+        if facts.jungle_cs_10_ref is not None:
+            text += f" (référence : {_count(facts.jungle_cs_10_ref)})"
+        lines.append(text + ".")
+    visited = [f"{ZONE_LABELS[lane]} ({n} min)" for lane, n in facts.lane_visits.items() if n]
+    if visited:
+        lines.append("Lanes où tu as joué entre 2 et 14 min : " + ", ".join(visited) + ".")
+    if facts.enemy_jungle_pct is not None:
+        lines.append(f"Temps passé dans la jungle adverse entre 2 et 14 min : "
+                     f"{_count(facts.enemy_jungle_pct)} %.")
+    if facts.early_kills is not None:
+        lines.append(f"Kills et assistances avant 8 minutes : {_count(facts.early_kills)}.")
+    if facts.objectives_total:
+        lines.append(f"Monstres épiques : présent 30 s avant dans {facts.objectives_present} "
+                     f"cas sur {facts.objectives_total}.")
+    for missed in facts.missed:
+        lines.append(f"- {missed.clock} : {missed.label} pris par l'adversaire alors que tu "
+                     "étais en vie mais loin de l'objectif.")
+    return lines
+
+
 def render_focus(finding: Finding) -> list[str]:
     return [
         f"{finding.label} : {finding.value_text} en moyenne, contre {finding.reference_text} "
@@ -110,7 +147,8 @@ def render_focus(finding: Finding) -> list[str]:
 
 
 def render_report(report: MatchReport, focus: Finding | None = None,
-                  goal_lines: list[str] | None = None) -> str:
+                  goal_lines: list[str] | None = None,
+                  progress_lines: list[str] | None = None) -> str:
     """Rapport d'après-partie. `focus` est la priorité actuelle du joueur (issue du
     diagnostic) ; `goal_lines` décrit l'avancement de ses objectifs."""
     result = "victoire" if report.win else "défaite"
@@ -140,6 +178,11 @@ def render_report(report: MatchReport, focus: Finding | None = None,
         lines += ["", "La timeline de cette partie n'est pas disponible : pas d'analyse des "
                       "moments clés."]
 
+    if report.jungle is not None:
+        jungle_lines = render_jungle(report.jungle, report.champion)
+        if jungle_lines:
+            lines += ["", "Ta jungle", *jungle_lines]
+
     if report.strengths:
         lines += ["", "Ce que tu as bien fait"]
         lines += [_stat(line, with_advice=False) for line in report.strengths]
@@ -151,6 +194,8 @@ def render_report(report: MatchReport, focus: Finding | None = None,
         lines += ["", "Ton axe de travail du moment", *render_focus(focus)]
     if goal_lines:
         lines += ["", "Tes objectifs", *goal_lines]
+    if progress_lines:
+        lines += ["", "Tes erreurs suivies", *progress_lines]
 
     lines += ["", DISCLAIMER]
     return "\n".join(lines)

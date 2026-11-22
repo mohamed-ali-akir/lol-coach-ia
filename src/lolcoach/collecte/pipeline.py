@@ -33,7 +33,9 @@ from lolcoach.riot import (
 
 log = logging.getLogger(__name__)
 
-TIERS = ("IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND")
+DIVIDED_TIERS = ("IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND")
+APEX_TIERS = ("MASTER", "GRANDMASTER", "CHALLENGER")  # sans divisions
+TIERS = DIVIDED_TIERS + APEX_TIERS
 DIVISIONS = ("I", "II", "III", "IV")
 
 # Une partie en cours au moment d'une collecte n'apparaît qu'à la suivante : on
@@ -280,22 +282,42 @@ def sync_player(
 
 
 def seed_from_ladder(
-    client: RiotClient, engine: Engine, tier: str, division: str, pages: int = 1
+    client: RiotClient, engine: Engine, tier: str, division: str | None = None, pages: int = 1,
+    limit: int | None = None,
 ) -> int:
-    """Ajoute les joueurs d'un rang donné (ex. GOLD II). Renvoie le nombre de nouveaux joueurs."""
-    tier, division = tier.upper(), division.upper()
-    if tier not in TIERS or division not in DIVISIONS:
+    """Ajoute les joueurs d'un rang donné (ex. GOLD II, ou CHALLENGER). Renvoie le nombre de
+    nouveaux joueurs.
+
+    Les paliers MASTER, GRANDMASTER et CHALLENGER n'ont pas de divisions : la division est
+    ignorée et la liste entière arrive en une fois (`pages` ne sert pas). Riot la trie par
+    points de ligue décroissants ; `limit` garde les `limit` premiers joueurs.
+    """
+    tier = tier.upper()
+    if tier in APEX_TIERS:
+        return _add_entries(engine, client.apex_league(tier)[:limit], tier, "I")
+    division = (division or "").upper()
+    if tier not in DIVIDED_TIERS or division not in DIVISIONS:
         raise ValueError(f"Rang invalide : {tier} {division}")
     added = 0
     for page in range(1, pages + 1):
         entries = client.league_entries(tier, division, page=page)
         if not entries:
             break
-        with engine.begin() as conn:
-            for entry in entries:
-                puuid = entry.get("puuid")
-                if puuid and db.add_player(conn, str(puuid), tier, division):
-                    added += 1
+        added += _add_entries(engine, entries, tier, division)
+    return added
+
+
+def _add_entries(engine: Engine, entries: list[dict[str, Any]], tier: str, division: str
+                 ) -> int:
+    if tier in APEX_TIERS:
+        # Les points de ligue décident de l'ordre : les meilleurs joueurs passent en premier.
+        entries = sorted(entries, key=lambda e: -int(e.get("leaguePoints") or 0))
+    added = 0
+    with engine.begin() as conn:
+        for entry in entries:
+            puuid = entry.get("puuid")
+            if puuid and db.add_player(conn, str(puuid), tier, division):
+                added += 1
     return added
 
 
