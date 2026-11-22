@@ -36,6 +36,7 @@ from sqlalchemy import (
     event,
     false,
     inspect,
+    make_url,
     or_,
     select,
 )
@@ -213,10 +214,31 @@ def _configure_sqlite(engine: Engine) -> None:
 def make_engine(url: str) -> Engine:
     if url.startswith("sqlite:///") and ":memory:" not in url:
         Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(url, pool_pre_ping=True)
+    options: dict[str, Any] = {"pool_pre_ping": True}
+    if make_url(url).get_backend_name() in ("mysql", "mariadb"):
+        # Chaque requête voit les données validées à cet instant, comme sur SQLite. Avec le
+        # réglage par défaut (REPEATABLE READ), MariaDB 11.6+ refuse une écriture dès qu'une
+        # autre transaction a touché la table depuis la première lecture (erreur 1020).
+        options["isolation_level"] = "READ COMMITTED"
+    engine = create_engine(url, **options)
     if engine.dialect.name == "sqlite":
         _configure_sqlite(engine)
     return engine
+
+
+# Erreurs MySQL / MariaDB qui signalent un conflit passager entre deux transactions :
+# 1020 ligne modifiée depuis sa lecture, 1205 attente de verrou trop longue, 1213 interblocage.
+# La transaction a été annulée en entier ; la refaire suffit.
+_TRANSIENT_MYSQL_ERRORS = frozenset({1020, 1205, 1213})
+
+
+def is_transient_conflict(exc: BaseException) -> bool:
+    """Vrai si l'erreur vient d'un conflit passager entre deux écritures simultanées."""
+    orig = getattr(exc, "orig", None)
+    args = getattr(orig, "args", ())
+    if args and isinstance(args[0], int):
+        return args[0] in _TRANSIENT_MYSQL_ERRORS
+    return orig is not None and "database is locked" in str(orig).lower()  # SQLite occupé
 
 
 def _run_alembic(engine: Engine, action: Callable[[AlembicConfig, set[str]], None]) -> None:

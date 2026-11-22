@@ -161,4 +161,4 @@ Le code a été relu par deux relecteurs indépendants, chargés de reproduire c
 
 Aucun test ne contacte le réseau. Les réponses de Riot sont produites par le simulateur ou construites à la main ; le modèle de langage est remplacé par un faux. Une base de démonstration de 300 parties, avec un joueur fictif aux défauts connus, sert de référence : le diagnostic doit retrouver ces défauts.
 
-Les tests tournent sur SQLite et sur MariaDB (`LOLCOACH_TEST_DATABASE_URL`). Passer sur MariaDB a par exemple révélé que les colonnes décimales étaient en simple précision sur MySQL.
+Les tests tournent sur SQLite et sur MariaDB (`LOLCOACH_TEST_DATABASE_URL`). Passer sur MariaDB a par exemple révélé que les colonnes décimales étaient en simple précision sur MySQL. La CI sur MariaDB 11 a aussi révélé qu'à partir de la version 11.6, deux enregistrements simultanés de la même partie pouvaient être refusés (erreur 1020) : les connexions MySQL / MariaDB lisent donc les données validées (`READ COMMITTED`, comme SQLite), et l'enregistrement d'une partie est refait jusqu'à 4 fois en cas de conflit passager (interblocage, ligne modifiée entre-temps).

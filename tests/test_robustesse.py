@@ -11,6 +11,7 @@ import httpx
 import pytest
 from conftest import make_match, simulated
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 from test_pipeline import FakeRiot
 
 from lolcoach import db
@@ -120,12 +121,84 @@ def test_corrupted_compressed_stream_is_skipped(tmp_path):
 
 
 def test_same_match_stored_concurrently(engine):
+    # Plusieurs manches : la course entre deux écritures ne se produit pas à chaque fois.
+    rounds = 5
+    for index in range(rounds):
+        match, timeline = simulated(match_id=f"SIM1_{index + 1}", seed=index)
+        with ThreadPoolExecutor(6) as pool:
+            results = list(pool.map(
+                lambda _, m=match, t=timeline: pipeline.store_match(engine, m, t, "GOLD")[0],
+                range(12)))
+        assert results.count(pipeline.SAVED) == 1 and results.count(pipeline.KNOWN) == 11
+    assert count(engine, db.matches) == rounds and count(engine, db.participants) == 10 * rounds
+
+
+def conflict(code, message):
+    """Erreur telle que MySQL / MariaDB la renvoie pour un conflit entre deux transactions."""
+    return OperationalError("INSERT INTO matches …", {}, Exception(code, message))
+
+
+def test_transient_conflicts_are_recognised():
+    assert db.is_transient_conflict(conflict(1020, "Record has changed since last read"))
+    assert db.is_transient_conflict(conflict(1213, "Deadlock found when trying to get lock"))
+    assert db.is_transient_conflict(conflict(1205, "Lock wait timeout exceeded"))
+    assert db.is_transient_conflict(OperationalError("x", {}, Exception("database is locked")))
+    assert not db.is_transient_conflict(conflict(1146, "Table 'matches' doesn't exist"))
+    assert not db.is_transient_conflict(conflict(2006, "MySQL server has gone away"))
+    assert not db.is_transient_conflict(ValueError("autre chose"))
+
+
+def test_save_is_retried_after_a_transient_conflict(engine, monkeypatch):
+    """MariaDB 11.6+ annule une transaction si la table a changé depuis sa première lecture
+    (erreur 1020) : vu en intégration continue. L'enregistrement est refait, sans doublon."""
     match, timeline = simulated()
-    with ThreadPoolExecutor(6) as pool:
-        results = list(pool.map(
-            lambda _: pipeline.store_match(engine, match, timeline, "GOLD")[0], range(12)))
-    assert results.count(pipeline.SAVED) == 1 and results.count(pipeline.KNOWN) == 11
+    real_save, calls, pauses = db.save_match, [], []
+
+    def flaky_save(conn, *args, **kwargs):
+        calls.append(1)
+        if len(calls) <= 2:
+            real_save(conn, *args, **kwargs)  # écrit, puis la transaction est annulée
+            raise conflict(1020, "Record has changed since last read in table 'matches'")
+        return real_save(conn, *args, **kwargs)
+
+    monkeypatch.setattr(db, "save_match", flaky_save)
+    monkeypatch.setattr(pipeline, "_pause", pauses.append)
+    assert pipeline.store_match(engine, match, timeline, "GOLD", snowball=True) == (
+        pipeline.SAVED, 10, True)
+    assert len(calls) == 3 and len(pauses) == 2 and pauses[1] > pauses[0] * 0.99
     assert count(engine, db.matches) == 1 and count(engine, db.participants) == 10
+
+
+def test_save_gives_up_on_lasting_conflicts_and_other_errors(engine, monkeypatch):
+    match, timeline = simulated()
+    calls = []
+
+    def always(code, message):
+        def failing_save(*_args, **_kwargs):
+            calls.append(code)
+            raise conflict(code, message)
+        return failing_save
+
+    monkeypatch.setattr(pipeline, "_pause", lambda _seconds: None)
+    monkeypatch.setattr(db, "save_match", always(1213, "Deadlock found"))
+    with pytest.raises(OperationalError):
+        pipeline.store_match(engine, match, timeline, "GOLD")
+    assert len(calls) == pipeline.SAVE_ATTEMPTS  # borné : pas de boucle sans fin
+
+    calls.clear()
+    monkeypatch.setattr(db, "save_match", always(1146, "Table 'matches' doesn't exist"))
+    with pytest.raises(OperationalError):
+        pipeline.store_match(engine, match, timeline, "GOLD")
+    assert len(calls) == 1  # une vraie panne n'est pas retentée
+    assert count(engine, db.matches) == 0
+
+
+def test_mysql_engines_read_committed_data(engine):
+    assert db.make_engine("sqlite://").dialect.name == "sqlite"  # SQLite : rien à régler
+    if engine.dialect.name != "mysql":
+        pytest.skip("réglage propre à MySQL / MariaDB")
+    with engine.connect() as conn:
+        assert conn.get_isolation_level() == "READ COMMITTED"
 
 
 # --- client Riot et analyse des réponses ---

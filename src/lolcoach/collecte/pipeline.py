@@ -10,11 +10,13 @@ Deux garanties :
 from __future__ import annotations
 
 import logging
+import random
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import Engine
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from lolcoach import db
 from lolcoach.archive import RawArchive
@@ -42,6 +44,11 @@ MAX_PENDING_ATTEMPTS = 5  # au-delà, une partie qui échoue toujours n'est plus
 ARCHIVE_META_KEY = "_lolcoach"
 
 SAVED, KNOWN, REJECTED = "saved", "known", "rejected"
+
+
+SAVE_ATTEMPTS = 4  # essais d'enregistrement d'une partie en cas de conflit passager
+SAVE_RETRY_DELAY_S = 0.05  # attente avant le 2e essai ; doublée ensuite, avec une part de hasard
+_pause = time.sleep  # remplaçable dans les tests
 
 
 @dataclass
@@ -95,22 +102,30 @@ def _prepare(match_dto: dict[str, Any], timeline_dto: dict[str, Any] | None,
 def _save(engine: Engine, prepared: _Prepared, tier: str | None, snowball: bool,
           replace: bool) -> tuple[str, int, bool]:
     has_timeline = prepared.frames is not None
-    new_players = 0
-    try:
-        with engine.begin() as conn:
-            saved = db.save_match(conn, prepared.match_row, prepared.rows, prepared.frames,
-                                  prepared.events, replace=replace)
-            if not saved:
-                return KNOWN, 0, has_timeline
-            if snowball:
-                for row in prepared.rows:
-                    if db.add_player(conn, row["puuid"], tier, None):
-                        new_players += 1
-            db.remove_pending(conn, prepared.match_row["match_id"])
-    except IntegrityError:
-        # Une autre collecte (ou l'API) a enregistré la même partie au même instant.
-        return KNOWN, 0, has_timeline
-    return SAVED, new_players, has_timeline
+    for attempt in range(1, SAVE_ATTEMPTS + 1):
+        new_players = 0
+        try:
+            with engine.begin() as conn:
+                saved = db.save_match(conn, prepared.match_row, prepared.rows, prepared.frames,
+                                      prepared.events, replace=replace)
+                if not saved:
+                    return KNOWN, 0, has_timeline
+                if snowball:
+                    for row in prepared.rows:
+                        if db.add_player(conn, row["puuid"], tier, None):
+                            new_players += 1
+                db.remove_pending(conn, prepared.match_row["match_id"])
+            return SAVED, new_players, has_timeline
+        except IntegrityError:
+            # Une autre collecte (ou l'API) a enregistré la même partie au même instant.
+            return KNOWN, 0, has_timeline
+        except DBAPIError as exc:
+            # Conflit passager avec une autre écriture (interblocage, ligne modifiée entre-temps) :
+            # la transaction a été annulée en entier, on la refait après une courte attente.
+            if attempt == SAVE_ATTEMPTS or not db.is_transient_conflict(exc):
+                raise
+            _pause(SAVE_RETRY_DELAY_S * 2 ** (attempt - 1) * (1 + random.random()))
+    raise AssertionError("inatteignable")  # la boucle renvoie ou lève toujours
 
 
 def store_match(
