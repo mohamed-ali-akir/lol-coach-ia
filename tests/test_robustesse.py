@@ -371,13 +371,21 @@ REFERENCE = ("Écart d'or à 15 min : -350 or en moyenne, contre 120 or. Les cha
 
 @pytest.mark.parametrize(("rewritten", "found"), [
     ("Tu as 350 or d'avance à 15 min.", "350"),  # le signe a disparu
-    ("Tu as gagné 3 000 or.", "« 3 000 »"),  # chiffres regroupés autrement
+    ("Tu as gagné 4 000 or.", "4000"),  # nombre à la française absent des données
     ("Tes chances passent de 46 % à 55 %.", "de 46 % à 55 %"),  # évolution inversée
     ("Tu perds −120 or.", "-120"),  # signe ajouté
     ("À 14:23 tu meurs.", "14:23"),
 ])
 def test_guard_rejects_subtle_distortions(rewritten, found):
     assert found in llm.unknown_facts(REFERENCE, rewritten)
+
+
+def test_guard_accepts_french_thousands_and_rates_as_percent():
+    reference = '{"distance_30s_avant": 5150, "taux_victoire": 0.614, "taux_choix": 0.31}'
+    ok = "Tu étais à 5 150 unités. Ce build gagne 61,4 % de ses parties (61 %), choisi à 31 %."
+    assert llm.unknown_facts(reference, ok) == []
+    assert llm.unknown_facts(reference, "Il gagne 62 % de ses parties.") == ["62"]
+    assert llm.unknown_facts(reference, "Tu étais à 5 160 unités.") == ["5160"]
 
 
 def test_guard_accepts_faithful_rewrites():

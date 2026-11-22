@@ -224,8 +224,10 @@ def _number(text: str) -> float:
 def _numbers(text: str) -> set[float]:
     """Nombres d'un texte, signe compris. Un tiret n'est un signe que s'il est collé au
     nombre et précédé d'un espace, d'une parenthèse ou du début du texte (« -350 or »),
-    pas dans « top-3 » ni dans une liste « - 6:28 »."""
+    pas dans « top-3 » ni dans une liste « - 6:28 ». Les milliers séparés par une espace,
+    à la française (« 5 150 »), comptent comme un seul nombre (5150)."""
     text = _TIME_RE.sub(" ", text)
+    text = _GROUPED_RE.sub(lambda m: re.sub(r"\D", "", m.group()), text)
     found = set()
     for match in _NUMBER_RE.finditer(text):
         start = match.start()
@@ -243,10 +245,12 @@ def _changes(text: str) -> set[tuple[float, float]]:
 def unknown_facts(reference: str, rewritten: str) -> list[str]:
     """Ce que `rewritten` affirme en chiffres et qui n'existe pas dans `reference`."""
     unknown = sorted(set(_TIME_RE.findall(rewritten)) - set(_TIME_RE.findall(reference)))
-    new_numbers = _numbers(rewritten) - _numbers(reference) - FREE_NUMBERS
+    known = _numbers(reference)
+    # Un taux donné en fraction dans les données (0.614, comme ceux d'op.gg) peut être écrit
+    # en pourcentage dans le texte : 61,4 % ou 61 %.
+    known |= {round(n * 100, digits) for n in known if 0 < n < 1 for digits in (0, 1)}
+    new_numbers = _numbers(rewritten) - known - FREE_NUMBERS
     unknown += [f"{n:g}" for n in sorted(new_numbers)]
-    unknown += [f"« {group} »" for group in _GROUPED_RE.findall(_TIME_RE.sub(" ", rewritten))
-                if group not in reference]
     unknown += [f"de {a:g} % à {b:g} %"
                 for a, b in sorted(_changes(rewritten) - _changes(reference))]
     return unknown
