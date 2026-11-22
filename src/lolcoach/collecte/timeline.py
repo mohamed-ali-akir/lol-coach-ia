@@ -110,6 +110,7 @@ def _parse_timeline(
                     "level": int(pf["level"]),
                     "x": int(position.get("x", 0)),
                     "y": int(position.get("y", 0)),
+                    "jungle_cs": int(pf["jungleMinionsKilled"]),
                 })
             last_timestamp = timestamp
             index += 1

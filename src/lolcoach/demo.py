@@ -60,11 +60,15 @@ def main(argv: list[str] | None = None) -> None:
 
     print("Entraînement des modèles…")
     training.train_draft(engine, None, 0.2).save(models / training.DRAFT_FILE)
-    benchmarks, winprob = training.train_analysis(engine, None, 0.2)
+    # Les parties simulées s'arrêtent au Diamant : les références par champion sont donc
+    # calculées sur tous les rangs (en vrai, elles viennent des MASTER et plus).
+    benchmarks, winprob, references = training.train_analysis(engine, None, 0.2, ())
     if isinstance(benchmarks, ValueError) or isinstance(winprob, ValueError):
         raise SystemExit("Pas assez de parties simulées pour entraîner les modèles.")
     winprob.save(models / training.WINPROB_FILE)
     benchmarks.save(models / training.BENCHMARKS_FILE)
+    if not isinstance(references, ValueError):
+        references.save(models / training.REFERENCES_FILE)
     training.print_winprob(winprob)
 
     coach = Coach(engine, models)

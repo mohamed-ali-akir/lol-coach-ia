@@ -26,7 +26,7 @@ DAMAGE_PER_MIN = {"TOP": 520, "JUNGLE": 430, "MIDDLE": 640, "BOTTOM": 680, "UTIL
 # Position habituelle côté bleu ; le côté rouge est son symétrique sur la carte.
 HOME = {
     "TOP": (2400, 12200),
-    "JUNGLE": (5600, 8600),
+    "JUNGLE": (3900, 7900),  # buff bleu : en pleine jungle alliée
     "MIDDLE": (6900, 6900),
     "BOTTOM": (12100, 2500),
     "UTILITY": (11900, 2800),

@@ -118,7 +118,8 @@ def train_in_child(folder: Path) -> None:
     """Entraîne les modèles sur la base du dossier et écrit durée et mémoire en JSON."""
     engine = db.make_engine(f"sqlite:///{folder / 'mesures.db'}")
     models = folder / "modeles"
-    seconds, (benchmarks, winprob) = timed(lambda: training.train_analysis(engine, None, 0.2))
+    seconds, (benchmarks, winprob, _refs) = timed(
+        lambda: training.train_analysis(engine, None, 0.2))
     benchmarks.save(models / training.BENCHMARKS_FILE)
     winprob.save(models / training.WINPROB_FILE)
     draft_seconds, _ = timed(lambda: training.train_draft(engine, None, 0.2))

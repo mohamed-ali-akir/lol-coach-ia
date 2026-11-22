@@ -85,7 +85,7 @@ def test_assist_masks_are_decoded_once():
 
 
 def test_single_pass_training_equals_separate_trainings(demo):
-    benchmarks, winprob = training.train_analysis(demo.engine, None, 0.2)
+    benchmarks, winprob, _refs = training.train_analysis(demo.engine, None, 0.2)
 
     assert benchmarks.groups == demo.benchmarks.groups
     assert benchmarks.importance == demo.benchmarks.importance
@@ -99,14 +99,14 @@ def test_single_pass_training_equals_separate_trainings(demo):
 
 def test_single_pass_training_reports_why_a_model_is_missing(engine):
     fill_demo_database(engine, n_matches=80, seed=1)
-    benchmarks, winprob = training.train_analysis(engine, None, 0.2)
+    benchmarks, winprob, _refs = training.train_analysis(engine, None, 0.2)
     # 80 parties : assez pour des repères « tous rangs », pas pour le modèle de victoire (100).
     assert isinstance(winprob, ValueError) and "au moins" in str(winprob)
     assert not isinstance(benchmarks, ValueError) and benchmarks.groups
     assert all(key.startswith("ALL|") for key in benchmarks.groups)
 
     empty = db.init_db("sqlite://")
-    nothing, no_model = training.train_analysis(empty, None, 0.2)
+    nothing, no_model, _no_refs = training.train_analysis(empty, None, 0.2)
     assert isinstance(nothing, ValueError) and isinstance(no_model, ValueError)
 
 

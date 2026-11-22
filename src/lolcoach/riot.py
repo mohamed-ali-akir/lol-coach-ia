@@ -30,6 +30,12 @@ DEV_KEY_LIMITS: list[tuple[int, float]] = [(20, 1.0), (100, 120.0)]
 
 RANKED_SOLO_QUEUE_ID = 420
 RANKED_SOLO_QUEUE = "RANKED_SOLO_5x5"
+# Les trois paliers du sommet n'ont ni divisions ni pages : une adresse par palier.
+APEX_ENDPOINTS = {
+    "MASTER": "masterleagues",
+    "GRANDMASTER": "grandmasterleagues",
+    "CHALLENGER": "challengerleagues",
+}
 
 MAX_RETRY_WAIT_S = 300.0  # on n'attend jamais plus longtemps entre deux tentatives
 WINDOW_MARGIN_S = 0.1  # marge : nos fenêtres ne sont pas parfaitement calées sur celles de Riot
@@ -305,6 +311,19 @@ class RiotClient:
             f"{path_segment(division)}"
         )
         entries = self._get_list("league.entries", self._platform_url + path, {"page": page})
+        return [entry for entry in entries if isinstance(entry, dict)]
+
+    def apex_league(self, tier: str, queue: str = RANKED_SOLO_QUEUE) -> list[dict[str, Any]]:
+        """Joueurs d'un palier « apex » (MASTER, GRANDMASTER, CHALLENGER) : une seule liste,
+        sans divisions ni pages, servie par une adresse propre à chaque palier."""
+        endpoint = APEX_ENDPOINTS.get(tier.upper())
+        if endpoint is None:
+            raise ValueError(f"Palier apex inconnu : {tier!r}")
+        path = f"/lol/league/v4/{endpoint}/by-queue/{path_segment(queue)}"
+        league = self._get_dict(f"league.{endpoint}", self._platform_url + path)
+        entries = league.get("entries")
+        if not isinstance(entries, list):
+            raise RiotError("Réponse de l'API Riot inattendue : classement sans joueurs.")
         return [entry for entry in entries if isinstance(entry, dict)]
 
     def league_entries_by_puuid(self, puuid: str) -> list[dict[str, Any]]:

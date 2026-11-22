@@ -50,8 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_classement = sub.add_parser("classement", help="ajouter les joueurs d'un rang à la file")
     p_classement.add_argument("palier", choices=pipeline.TIERS, type=str.upper)
-    p_classement.add_argument("division", choices=pipeline.DIVISIONS, type=str.upper)
+    p_classement.add_argument("division", choices=pipeline.DIVISIONS, type=str.upper,
+                              nargs="?", help="sans objet pour MASTER, GRANDMASTER, CHALLENGER")
     p_classement.add_argument("--pages", type=int, default=1, help="~200 joueurs par page")
+    p_classement.add_argument("--max", type=int, dest="max_joueurs",
+                              help="MASTER et plus : garder les N meilleurs joueurs")
 
     p_parties = sub.add_parser("parties", help="télécharger les parties des joueurs en file")
     p_parties.add_argument("--joueurs", type=int, default=10)
@@ -107,9 +110,14 @@ def _run(args: argparse.Namespace) -> None:
             print(f"{args.riot_id} : {_summary(stats)}")
             print(f"Identifiant (puuid) à utiliser avec lolcoach-coach : {puuid}")
         elif args.commande == "classement":
+            if args.palier not in pipeline.APEX_TIERS and args.division is None:
+                raise ConfigError(f"Précise la division : lolcoach-collecte classement "
+                                  f"{args.palier} II")
             added = pipeline.seed_from_ladder(client, engine, args.palier, args.division,
-                                              args.pages)
-            print(f"{added} nouveaux joueurs {args.palier} {args.division} ajoutés à la file.")
+                                              args.pages, args.max_joueurs)
+            rank = args.palier if args.palier in pipeline.APEX_TIERS else (
+                f"{args.palier} {args.division}")
+            print(f"{added} nouveaux joueurs {rank} ajoutés à la file.")
         elif args.commande == "parties":
             refresh = None if args.rafraichir_apres is None else int(args.rafraichir_apres * 3600)
             stats = pipeline.collect_matches(client, engine, archive, args.joueurs,

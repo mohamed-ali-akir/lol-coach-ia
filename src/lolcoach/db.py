@@ -132,10 +132,11 @@ participant_frames = Table(
     Column("timestamp_ms", Integer, nullable=False),
     Column("total_gold", Integer, nullable=False),
     Column("xp", Integer, nullable=False),
-    Column("cs", Integer, nullable=False),
+    Column("cs", Integer, nullable=False),  # sbires ET monstres de la jungle
     Column("level", SmallInteger, nullable=False),
     Column("x", Integer, nullable=False),
     Column("y", Integer, nullable=False),
+    Column("jungle_cs", Integer, nullable=True),  # monstres de la jungle seuls (révision 0004)
 )
 
 # Événements datés à la milliseconde : morts, monstres, bâtiments, plaques, balises.
