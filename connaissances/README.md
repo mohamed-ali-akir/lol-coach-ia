@@ -27,5 +27,24 @@ lolcoach-fiches lister --statut a_valider   # relire…
 lolcoach-fiches valider jgl-setup-drake     # …et valider
 ```
 
+### Depuis une session Claude du cloud : le relais du PC
+
+Une session du cloud n'a ni `agy` ni ton compte Google : elle confie la vidéo à ton PC par
+GitHub.
+
+1. **Sur le PC**, une fois : `LOLCOACH_FICHES=agy` dans `.env`, puis double-clic sur
+   `outils\relais_lolcoach.cmd` (ou `lolcoach-relais surveiller`). Il regarde toutes les 20 s
+   les branches `relais-fiches-*`, une demande à la fois, et ne touche ni à ta branche ni à
+   tes fichiers. Tant qu'il tourne, le PC ne se met pas en veille.
+2. **Dans le cloud** : `lolcoach-relais demander "https://www.youtube.com/watch?v=…" --role JUNGLE`,
+   puis `lolcoach-relais lire` quelques minutes plus tard (code 3 = encore en attente). Les
+   fiches arrivent « à valider » dans ce dossier.
+
+Ce qui voyage : l'identifiant de la vidéo et le rôle, rien d'autre. Le PC reconstruit lui-même
+le lien et lance toujours sa propre commande. Une session du cloud peut pousser une branche mais
+pas la supprimer : elle marque la branche comme lue, et le PC la supprime au passage suivant.
+Pour un autre préfixe de branche (si le dépôt refuse `relais-*`), `LOLCOACH_RELAIS_PREFIXE`
+des deux côtés.
+
 Une fiche dépassée par un patch passe en `obsolete` (`lolcoach-fiches obsolete <id>`) au lieu
 d'être supprimée : Git garde l'historique.

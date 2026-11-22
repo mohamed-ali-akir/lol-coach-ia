@@ -107,6 +107,24 @@ def _cards_provider() -> GeminiProvider | CommandProvider:
     return CommandProvider(template, name=choice)
 
 
+def canonical_url(video: str) -> str:
+    """Lien YouTube reconstruit à partir du seul identifiant : rien d'autre ne passe."""
+    return f"https://www.youtube.com/watch?v={youtube_id(f'https://youtu.be/{video}')}"
+
+
+def ask_for_cards(url: str, role: str) -> tuple[dict[str, Any], str]:
+    """Fait regarder la vidéo par l'IA choisie (LOLCOACH_FICHES) et renvoie sa réponse JSON
+    brute, avec le nom du fournisseur. Utilisé par `video` et par le relais du PC."""
+    video = youtube_id(url)
+    provider = _cards_provider()
+    canonical = canonical_url(video)
+    if isinstance(provider, GeminiProvider):
+        answer = provider.look_video(cards_prompt(role), canonical, CARDS_SCHEMA)
+    else:
+        answer = extract_json(provider.write(cards_prompt(role, canonical)))
+    return answer, provider.name
+
+
 def _save(cards: list[Card]) -> None:
     for card in cards:
         path = write_card(card)
@@ -167,12 +185,8 @@ def _run(args: argparse.Namespace) -> None:
         _save(cards_from_answer(answer, args.source, args.role, existing))
         return
     video = youtube_id(args.url)
-    provider = _cards_provider()
-    print(f"Analyse de la vidéo par {provider.name}…")
-    if isinstance(provider, GeminiProvider):
-        answer = provider.look_video(cards_prompt(args.role), args.url, CARDS_SCHEMA)
-    else:
-        answer = extract_json(provider.write(cards_prompt(args.role, args.url)))
+    print("Analyse de la vidéo…")
+    answer, _name = ask_for_cards(args.url, args.role)
     _save(cards_from_answer(answer, f"youtube:{video}", args.role, existing))
 
 

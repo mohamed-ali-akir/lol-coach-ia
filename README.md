@@ -158,6 +158,7 @@ L'API Claude n'a pas été appelée avec une vraie clé. Ce qui est vérifié : 
 | Mot du coach avec un vrai modèle local (Ollama, `gemma3:4b` et `llama3.2`) | vérifié de bout en bout, LoL Companion compris ; mesures plus haut |
 | Mot du coach avec l'API Claude | requêtes et erreurs vérifiées à travers le vrai SDK, face à un serveur simulé ; **jamais appelée avec une vraie clé** |
 | Client LoL, Replay API, Gemini, `agy`, `claude -p` | vérifiés face à des réponses simulées, d'après la documentation de Riot (Replay API, League Director) et de la communauté (client), et le code des SDK ; **jamais lancés contre un vrai client LoL ni une vraie clé Gemini** : `lolcoach-auto verifier` est le premier test à faire |
+| Relais cloud → PC pour les fiches (`lolcoach-relais`) | aller-retour vérifié par le vrai GitHub avec une IA simulée ; `agy` lui-même jamais lancé ([connaissances/README.md](connaissances/README.md)) |
 | Zones de la carte (pathing) | approximation géométrique de la Faille, vérifiée sur de vraies positions : à 3-5 min, 81 à 85 % des laners sont classés dans leur lane, le reste étant en base ou en rivière ; à 1:00, 88 % des junglers dans leur jungle ([docs/QUALITE.md](docs/QUALITE.md)) |
 | Qualité des modèles sur de vraies parties | mesurée sur 1 659 parties : probabilité de victoire utile et bien calibrée (73,4 % contre 48,9 %), draft pas encore utile (non enregistré), statistiques du diagnostic stables chez un même joueur, mesure refaite à chaque entraînement ([docs/QUALITE.md](docs/QUALITE.md)). Un seul serveur (EUW) à ce jour |
 

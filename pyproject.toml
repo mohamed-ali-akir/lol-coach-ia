@@ -44,6 +44,7 @@ lolcoach-demo = "lolcoach.demo:main"
 lolcoach-mcp = "lolcoach.mcp_server:main"
 lolcoach-auto = "lolcoach.auto_cli:main"
 lolcoach-fiches = "lolcoach.fiches_cli:main"
+lolcoach-relais = "lolcoach.relais:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
