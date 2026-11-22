@@ -84,3 +84,28 @@ def test_mcp_tool_error_is_reported_not_raised(tools):
 
     with pytest.raises(ToolError, match="invalide"):
         asyncio.run(server.call_tool("rapport_partie", {"partie": "../etc"}))
+
+
+def test_cards_for_a_game_are_chosen_among_all_cards():
+    """Avec 46 vraies fiches, les 12 premières par ordre alphabétique étaient choisies avant le
+    tri par thème : la fiche utile pour la partie n'y figurait souvent pas."""
+    from types import SimpleNamespace
+
+    from lolcoach.coach.contexte import pick_cards
+    from lolcoach.connaissances import Card
+
+    def card(card_id, theme, champions=()):
+        return Card(id=card_id, title=card_id, role="JUNGLE", theme=theme, body="x" * 60,
+                    status="valide", champions=list(champions))
+
+    cards = [card(f"a-{i:02d}", "macro") for i in range(20)]
+    cards += [card("z-vision", "vision"), card("z-farm", "farm"),
+              card("nasus-farm", "farm", ["Nasus"]), card("lee-combat", "combat", ["LeeSin"])]
+    weak = SimpleNamespace(metric="vision_per_min")
+    report = SimpleNamespace(role="JUNGLE", champion="Nasus", weaknesses=[weak])
+
+    chosen = pick_cards(cards, report, error_themes={"farm"}, limit=5)
+    ids = [c.id for c in chosen]
+    assert ids[:3] == ["nasus-farm", "z-farm", "z-vision"]  # thème d'abord, champion avant
+    assert "lee-combat" not in ids  # fiche d'un autre champion : jamais
+    assert len(chosen) == 5

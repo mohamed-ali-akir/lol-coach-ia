@@ -9,13 +9,32 @@ from __future__ import annotations
 from typing import Any
 
 from lolcoach.analyse.deaths import clock
+from lolcoach.analyse.metrics import FAMILY_OF
 from lolcoach.analyse.report import MatchReport
 from lolcoach.coach.service import Coach
-from lolcoach.connaissances import load_cards, search
+from lolcoach.connaissances import Card, load_cards, search
 from lolcoach.suivi import store as tracking
 from lolcoach.suivi.catalogue import BY_CODE, describe_for_ai
 
 MAX_CARDS = 12
+# Thèmes de fiches utiles selon la famille d'une statistique ratée pendant la partie.
+FAMILY_THEMES = {
+    "farm": ("farm", "pathing"), "lane": ("pathing", "ganks"), "survie": ("combat", "tracking"),
+    "vision": ("vision",), "equipe": ("objectifs", "macro"), "combat": ("combat",),
+}
+
+
+def pick_cards(cards: list[Card], report: MatchReport, error_themes: set[str],
+               limit: int = MAX_CARDS) -> list[Card]:
+    """Fiches validées pour cette partie : d'abord celles dont le thème correspond à ce qui
+    a mal tourné (erreurs repérées, statistiques faibles), et à chaque niveau celles du
+    champion avant les générales. Le choix porte sur TOUTES les fiches : prendre d'abord les
+    12 premières puis les trier laissait de côté la fiche utile dès qu'il y en avait plus."""
+    themes = set(error_themes)
+    for line in report.weaknesses:
+        themes.update(FAMILY_THEMES.get(FAMILY_OF.get(line.metric, ""), ()))
+    candidates = search(cards, role=report.role, champion=report.champion, limit=len(cards))
+    return sorted(candidates, key=lambda c: c.theme not in themes)[:limit]
 
 
 def error_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -89,7 +108,5 @@ def coaching_context(coach: Coach, puuid: str, match_id: str | None = None) -> d
     })
     cards, _ = load_cards()
     themes = {BY_CODE[e["code"]].theme for e in errors if e["code"] in BY_CODE}
-    chosen = search(cards, role=report.role, champion=report.champion, limit=MAX_CARDS)
-    chosen = sorted(chosen, key=lambda c: c.theme not in themes)[:MAX_CARDS]
-    context["fiches"] = [c.as_dict() for c in chosen]
+    context["fiches"] = [c.as_dict() for c in pick_cards(cards, report, themes)]
     return context
