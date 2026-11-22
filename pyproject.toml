@@ -22,6 +22,7 @@ mysql = ["pymysql>=1.1"]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
 claude = ["anthropic>=2.12"]
 mcp = ["mcp>=2.3,<3"]
+gemini = ["google-genai>=3.6"]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
@@ -31,6 +32,7 @@ dev = [
     "anthropic>=2.12",
     "pymysql>=1.1",
     "mcp>=2.3,<3",
+    "google-genai>=3.6",
 ]
 
 [project.scripts]
@@ -40,12 +42,19 @@ lolcoach-coach = "lolcoach.coach.cli:main"
 lolcoach-api = "lolcoach.api.server:main"
 lolcoach-demo = "lolcoach.demo:main"
 lolcoach-mcp = "lolcoach.mcp_server:main"
+lolcoach-auto = "lolcoach.auto_cli:main"
+lolcoach-fiches = "lolcoach.fiches_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-lolcoach = ["migrations/*.py", "migrations/*.mako", "migrations/versions/*.py"]
+lolcoach = [
+    "client_lol/riotgames.pem",
+    "migrations/*.py",
+    "migrations/*.mako",
+    "migrations/versions/*.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -57,7 +66,7 @@ files = ["src"]
 
 [[tool.mypy.overrides]]
 # Bibliothèques sans annotations de types complètes.
-module = ["sklearn.*", "anthropic.*"]
+module = ["sklearn.*", "anthropic.*", "google.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

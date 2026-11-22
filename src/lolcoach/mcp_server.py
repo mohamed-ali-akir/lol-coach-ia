@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 
 from lolcoach.analyse.deaths import clock
 from lolcoach.analyse.diagnostic import DiagnosticError
-from lolcoach.analyse.report import MatchReport, ReportError
+from lolcoach.analyse.report import ReportError
+from lolcoach.coach.contexte import error_row, report_facts
 from lolcoach.coach.goals import GoalError
 from lolcoach.coach.service import Coach
 from lolcoach.config import ConfigError, database_url, load_config, models_dir
@@ -142,8 +143,8 @@ class CoachTools:
         report = result.report
         data: dict[str, Any] = {"texte": result.text}
         if report is not None:
-            data["faits"] = _report_facts(report)
-            data["erreurs_reperees"] = [_error_row(e) for e in tracking.match_errors(
+            data["faits"] = report_facts(report)
+            data["erreurs_reperees"] = [error_row(e) for e in tracking.match_errors(
                 self.coach.engine, puuid, report.match_id)]
             data["notes_du_joueur"] = [
                 {"minute": None if n["ts_ms"] is None else clock(n["ts_ms"]), "texte": n["text"]}
@@ -220,41 +221,6 @@ class CoachTools:
         done = tracking.set_opinion(self.coach.engine, self._player(joueur), numero,
                                     values[avis])
         return {"enregistre": done}
-
-
-def _error_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {"numero": row["id"], "code": row["code"],
-            "minute": None if row["ts_ms"] is None else clock(row["ts_ms"]),
-            "source": row["source"], "cout_points": row["cost_points"],
-            "confiance": row["confidence"], "preuve": row["evidence"],
-            "avis_joueur": row["confirmed"]}
-
-
-def _report_facts(report: MatchReport) -> dict[str, Any]:
-    facts: dict[str, Any] = {
-        "partie": report.match_id, "date": report.date, "champion": report.champion,
-        "role": report.role, "victoire": report.win, "duree": report.duration,
-        "kda": [report.kills, report.deaths, report.assists],
-        "moments_cles": [
-            {"minute": m.clock, "type": m.label, "adversaires": m.enemies,
-             "allies_proches": m.allies_nearby, "proba_avant": round(m.wp_before, 2),
-             "proba_apres": round(m.wp_after, 2), "cout_points": round(m.cost_points, 1),
-             "objectif_perdu": m.objective}
-            for m in report.moments],
-    }
-    if report.jungle is not None:
-        j = report.jungle
-        facts["jungle"] = {
-            "cote_depart": j.start_side, "monstres_3_30": j.first_clear,
-            "reference_3_30": j.first_clear_ref, "monstres_10": j.jungle_cs_10,
-            "reference_10": j.jungle_cs_10_ref, "jungle_adverse_pct": j.enemy_jungle_pct,
-            "kills_assists_avant_8": j.early_kills, "minutes_par_lane": j.lane_visits,
-            "objectifs": f"{j.objectives_present}/{j.objectives_total}",
-            "objectifs_manques": [{"minute": m.clock, "objectif": m.label} for m in j.missed],
-        }
-    if report.comparison is not None:
-        facts["comparaison_champion"] = report.comparison.as_dict()
-    return facts
 
 
 TOOL_ERRORS = (ValueError, ReportError, DiagnosticError, GoalError, ArtifactError, RiotError,
