@@ -35,6 +35,20 @@ MIN_GROUP = 100  # parties nécessaires pour un repère propre à un rang
 MIN_ANY = 30  # en dessous, pas de repère du tout
 MIN_IMPORTANCE = 200  # parties nécessaires pour apprendre le poids des statistiques
 IMPORTANCE_FLOOR = 0.05
+MIN_STABILITY_PLAYERS = 20  # en dessous, la stabilité n'est pas jugée (pas de décision)
+
+
+@dataclass(frozen=True)
+class Stability:
+    """Accord entre deux moitiés des parties de chaque joueur (voir `analyse/stability.py`)."""
+
+    rho: float  # corrélation de Spearman, de -1 à 1
+    players: int
+
+    @property
+    def threshold(self) -> float:
+        """Corrélation au-delà de laquelle le hasard est peu probable (5 %, unilatéral)."""
+        return 1.645 / float(np.sqrt(max(1, self.players - 1)))
 
 
 def _key(tier: str, role: str, win: bool) -> str:
@@ -74,6 +88,15 @@ class Benchmarks:
     importance: dict[str, dict[str, float]] = field(default_factory=dict)
     n_games: int = 0
     trained_at: str = ""
+    stability: dict[str, Stability] = field(default_factory=dict)
+
+    def stable(self, metric: str) -> bool | None:
+        """La statistique décrit-elle un trait stable du joueur ? None si ce n'a pas pu être
+        mesuré (trop peu de joueurs suivis) : faute de preuve contraire, elle est admise."""
+        found = self.stability.get(metric)
+        if found is None or found.players < MIN_STABILITY_PLAYERS:
+            return None
+        return found.rho > found.threshold
 
     def tier_used(self, tier: str | None, role: str) -> str | None:
         """Rang réellement utilisé pour comparer : le rang demandé s'il a des repères pour les
@@ -132,6 +155,8 @@ class Benchmarks:
             "quantiles": [float(q) for q in QUANTILES],
             "groups": self.groups,
             "importance": self.importance,
+            "stability": {key: {"rho": s.rho, "players": s.players}
+                          for key, s in self.stability.items()},
         })
 
     @staticmethod
@@ -152,8 +177,12 @@ class Benchmarks:
                 groups[str(key)] = {"n": int(group["n"]), "metrics": metrics, "means": means}
             importance = {str(role): {str(m): float(w) for m, w in weights.items()}
                           for role, weights in data["importance"].items()}
+            # Absente des fichiers de repères antérieurs : rien n'est alors exclu.
+            stability = {str(key): Stability(float(s["rho"]), int(s["players"]))
+                         for key, s in (data.get("stability") or {}).items()
+                         if key in METRICS_BY_KEY and np.isfinite(float(s["rho"]))}
             return Benchmarks(groups, importance, int(data["n_games"]),
-                              str(data.get("trained_at", "")))
+                              str(data.get("trained_at", "")), stability)
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise ArtifactError(f"{path} : repères illisibles ({exc!r})") from exc
 

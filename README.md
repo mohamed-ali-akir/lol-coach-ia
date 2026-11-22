@@ -65,6 +65,8 @@ Avec une clé de développement (100 requêtes toutes les 2 minutes, 2 requêtes
 
 `verifier` teste toute la chaîne (compte, rang, liste des parties, partie, timeline, analyse) et dit ce qui passe ou non. Il liste aussi les types d'événements que Riot envoie et que le projet ignore : c'est la première chose à relancer si un jour la collecte se met à échouer après un changement de l'API.
 
+Pour construire la base de ton rang : `lolcoach-collecte classement PLATINUM II`, puis `lolcoach-collecte parties --rang PLATINUM --joueurs 30`.
+
 Autres commandes de collecte : `completer` (timelines manquantes), `reimporter` (reconstruit la base depuis l'archive, sans contacter Riot), `parties --rafraichir-apres 24` (reprend les joueurs déjà vus).
 
 ## Dans LoL Companion
@@ -124,10 +126,10 @@ L'API Claude n'a pas été appelée avec une vraie clé. Ce qui est vérifié : 
 | Collecte, analyse, modèles, coach, API | vérifiés par les tests, sur SQLite et MariaDB, avec des **parties simulées** |
 | Tolérance au format réel de Riot (champs et événements en plus, cas limites documentés) | vérifiée par `tests/test_format_reel.py`, sur des réponses **reconstruites d'après la documentation** |
 | Connexion au vrai serveur de Riot et lecture de ses refus | vérifiée (clé invalide → message clair, rien n'est enregistré) |
-| Lecture de vraies parties avec une vraie clé | vérifiée : 966 parties classées EUW collectées et analysées sans erreur de format ([docs/QUALITE.md](docs/QUALITE.md)) |
+| Lecture de vraies parties avec une vraie clé | vérifiée : 1 659 parties classées EUW (Argent, Or, Platine) collectées et analysées sans erreur de format ([docs/QUALITE.md](docs/QUALITE.md)) |
 | Mot du coach avec un vrai modèle local (Ollama, `gemma3:4b` et `llama3.2`) | vérifié de bout en bout, LoL Companion compris ; mesures plus haut |
 | Mot du coach avec l'API Claude | requêtes et erreurs vérifiées à travers le vrai SDK, face à un serveur simulé ; **jamais appelée avec une vraie clé** |
-| Qualité des modèles sur de vraies parties | mesurée sur 966 parties Or : probabilité de victoire utile et bien calibrée (72,5 % contre 53,3 %), draft pas encore utile (non enregistré), 12 statistiques du diagnostic sur 13 stables chez un même joueur ([docs/QUALITE.md](docs/QUALITE.md)). Un seul rang et un seul serveur à ce jour |
+| Qualité des modèles sur de vraies parties | mesurée sur 1 659 parties : probabilité de victoire utile et bien calibrée (73,4 % contre 48,9 %), draft pas encore utile (non enregistré), statistiques du diagnostic stables chez un même joueur, mesure refaite à chaque entraînement ([docs/QUALITE.md](docs/QUALITE.md)). Un seul serveur (EUW) à ce jour |
 
 ## Sécurité et vie privée
 

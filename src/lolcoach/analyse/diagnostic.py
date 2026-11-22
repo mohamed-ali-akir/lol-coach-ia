@@ -118,7 +118,10 @@ def _finding(metric: Metric, games: list[GameMetrics], benchmarks: Benchmarks,
     # Erreur type du rang moyen : plus il y a de parties, plus le rang est sûr.
     variance = sum((s[2] - percentile) ** 2 for s in scored) / (count - 1)
     margin = (variance / count) ** 0.5
-    significant = (metric.priority_eligible and percentile <= PRIORITY_PERCENTILE
+    # Une statistique mesurée instable chez un même joueur ne fait pas une priorité : ce
+    # serait du hasard (analyse/stability.py).
+    significant = (benchmarks.stable(metric.key) is not False
+                   and percentile <= PRIORITY_PERCENTILE
                    and percentile + CONFIDENCE_Z * margin < 50.0)
     return Finding(
         metric=metric.key,

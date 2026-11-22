@@ -40,10 +40,6 @@ class Metric:
     # Conseils propres à un poste, quand le conseil général ne s'y applique pas :
     # (poste, en partie, pour s'entraîner).
     role_advice: tuple[tuple[str, str, str], ...] = ()
-    # Peut-elle devenir une priorité du diagnostic ? Non si, sur de vraies parties, le rang
-    # d'un joueur n'est pas stable d'une moitié de ses parties à l'autre : la priorité serait
-    # du hasard (voir docs/QUALITE.md et benchmarks/stabilite.py).
-    priority_eligible: bool = True
 
     def advice_for(self, role: str | None) -> str:
         return next((advice for r, advice, _ in self.role_advice if r == role), self.advice)
@@ -219,10 +215,7 @@ METRICS: tuple[Metric, ...] = (
                          deaths_module.CATEGORY_ADVICE_BY_ROLE[("JUNGLE",
                                                                 deaths_module.ISOLATED)],
                          "Avant d'entrer dans la jungle adverse, compte les adversaires "
-                         "visibles sur la mini-carte."),),
-           # Accord entre les deux moitiés des parties d'un joueur : 0,11 sur 48 vrais joueurs
-           # Or (les autres statistiques : 0,32 à 0,91). Affichée par partie, jamais priorité.
-           priority_eligible=False),
+                         "visibles sur la mini-carte."),)),
     Metric("time_dead_pct", "Temps passé mort", "%", False, _time_dead_pct,
            "En fin de partie une mort dure plus de 40 secondes : ne te bats que si l'enjeu "
            "(objectif, tour) le justifie.",

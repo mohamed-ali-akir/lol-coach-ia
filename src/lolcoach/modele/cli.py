@@ -20,6 +20,7 @@ from typing import Protocol, TypeVar
 
 from sqlalchemy import Engine
 
+from lolcoach.analyse import stability
 from lolcoach.analyse.benchmarks import (
     ALL_TIERS,
     BenchmarkBuilder,
@@ -102,6 +103,8 @@ def train_analysis(engine: Engine, patch: str | None, test_ratio: float
     benchmarks: Benchmarks | ValueError = builder.finish()
     if isinstance(benchmarks, Benchmarks) and not benchmarks.groups:
         benchmarks = ValueError("Pas assez de parties pour établir des repères.")
+    elif isinstance(benchmarks, Benchmarks):
+        benchmarks.stability = stability.measure(engine, benchmarks)
     winprob: WinProbModel | ValueError
     try:
         winprob = trainer.finish(test_ratio)
@@ -168,6 +171,18 @@ def print_benchmarks(benchmarks: Benchmarks) -> None:
         top = sorted(weights.items(), key=lambda kv: -kv[1])[:3]
         print(f"  Ce qui pèse le plus sur la victoire en {ROLE_LABELS[role]} : "
               + ", ".join(f"{METRICS_BY_KEY[key].label.lower()} ({_pct(w)})" for key, w in top))
+    measured = {key: s for key, s in benchmarks.stability.items()
+                if benchmarks.stable(key) is not None}
+    if not measured:
+        print("  Stabilité des statistiques chez un même joueur : pas assez de joueurs suivis "
+              "pour la mesurer.")
+        return
+    unstable = sorted(key for key in measured if benchmarks.stable(key) is False)
+    players = max(s.players for s in measured.values())
+    print(f"  Stabilité chez un même joueur ({players} joueurs suivis) : "
+          + (", ".join(METRICS_BY_KEY[k].label.lower() for k in unstable)
+             + " ne se distingue pas du hasard (jamais une priorité)" if unstable
+             else "toutes les statistiques mesurées sont stables"))
 
 
 def main(argv: list[str] | None = None) -> None:

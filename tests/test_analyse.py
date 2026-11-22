@@ -251,16 +251,74 @@ def test_report_focus_only_for_a_game_played_in_the_diagnosed_role(demo):
     assert "Ton axe de travail du moment" not in other.report(demo.puuid).text
 
 
-def test_a_metric_unstable_on_real_games_is_never_a_priority(demo):
-    """Sur 48 vrais joueurs Or, le rang en « morts seul face à plusieurs adversaires » ne
-    concordait pas d'une moitié des parties à l'autre (0,11) : une priorité serait du hasard.
-    Le joueur fictif de la démo, lui, meurt souvent isolé : la statistique reste mesurée."""
-    from lolcoach.coach.service import Coach
+def test_a_metric_measured_unstable_is_never_a_priority(demo):
+    """Sur 966 vraies parties Or, le rang en « morts seul face à plusieurs adversaires » ne
+    concordait pas d'une moitié des parties d'un joueur à l'autre : une priorité aurait été
+    du hasard. La stabilité est mesurée à chaque entraînement et enregistrée avec les
+    repères ; une statistique instable ne devient jamais une priorité."""
+    import dataclasses
 
-    assert not mt.METRICS_BY_KEY["isolated_deaths"].priority_eligible
-    assert sum(not m.priority_eligible for m in mt.METRICS) == 1
-    diagnostic = Coach(demo.engine, demo.models_dir).diagnostic(demo.puuid).diagnostic
-    isolated = next(f for f in diagnostic.findings if f.metric == "isolated_deaths")
-    assert isolated.percentile < 50  # moins bon que les joueurs comparables…
-    assert not isolated.significant and isolated.priority == 0  # …mais jamais une priorité
-    assert "isolated_deaths" not in {f.metric for f in diagnostic.priorities}
+    from lolcoach.analyse.benchmarks import Stability
+    from lolcoach.analyse.diagnostic import diagnose
+    from lolcoach.analyse.metrics import player_games
+
+    games = player_games(demo.engine, demo.puuid, 30)
+    before = diagnose(games, demo.benchmarks, demo.puuid, "GOLD")
+    target = before.priorities[0].metric
+    unstable = dataclasses.replace(demo.benchmarks, stability={target: Stability(0.05, 60)})
+    after = diagnose(games, unstable, demo.puuid, "GOLD")
+    finding = next(f for f in after.findings if f.metric == target)
+    assert not finding.significant and finding.priority == 0
+    assert target not in {f.metric for f in after.priorities}
+
+    stable = dataclasses.replace(demo.benchmarks, stability={target: Stability(0.6, 60)})
+    assert diagnose(games, stable, demo.puuid, "GOLD").priorities[0].metric == target
+    # Trop peu de joueurs pour juger : pas de décision, la statistique reste admise.
+    unknown = dataclasses.replace(demo.benchmarks, stability={target: Stability(0.05, 10)})
+    assert unknown.stable(target) is None
+    assert diagnose(games, unknown, demo.puuid, "GOLD").priorities[0].metric == target
+
+
+def test_stability_measures_consistent_players_and_rejects_noise(demo):
+    """Joueurs dont le farm est toujours du même ordre (stable) et dont les morts isolées
+    sont tirées au hasard (instable) : la mesure doit faire la différence."""
+    import dataclasses
+
+    from lolcoach.analyse import stability
+
+    rng = np.random.default_rng(3)
+    players = []
+    for p in range(40):
+        level = rng.uniform(4.0, 9.0)  # chaque joueur a son niveau de farm
+        games = [mt.GameMetrics(f"M{p}_{g}", g, f"p{p}", "MIDDLE", "GOLD", bool(g % 2), "X",
+                                30.0, {"cs_per_min": level + rng.normal(0, 0.3),
+                                       "isolated_deaths": float(rng.poisson(1.0))})
+                 for g in range(12)]
+        players.append(("GOLD", games))
+    measured = stability.from_games(players, demo.benchmarks)
+    assert measured["cs_per_min"].players == 40
+    assert measured["cs_per_min"].rho > 0.8 > measured["cs_per_min"].threshold
+    assert measured["isolated_deaths"].rho < measured["isolated_deaths"].threshold
+    checked = dataclasses.replace(demo.benchmarks, stability=measured)
+    assert checked.stable("cs_per_min") is True and checked.stable("isolated_deaths") is False
+    # Moins de 10 parties au poste principal : le joueur ne compte pas.
+    assert stability.from_games([("GOLD", g[:9]) for _, g in players], demo.benchmarks) == {}
+
+
+def test_stability_is_saved_with_the_benchmarks(demo, tmp_path):
+    import dataclasses
+    import json
+
+    from lolcoach.analyse.benchmarks import Benchmarks, Stability
+
+    path = tmp_path / "reperes.json"
+    with_stability = dataclasses.replace(
+        demo.benchmarks, stability={"cs_per_min": Stability(0.65, 48)})
+    with_stability.save(path)
+    assert Benchmarks.load(path).stability == {"cs_per_min": Stability(0.65, 48)}
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["stability"]  # fichier écrit par une version antérieure : rien n'est exclu
+    path.write_text(json.dumps(data), encoding="utf-8")
+    old = Benchmarks.load(path)
+    assert old.stability == {} and old.stable("cs_per_min") is None
