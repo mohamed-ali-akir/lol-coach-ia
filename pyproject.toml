@@ -20,14 +20,14 @@ dependencies = [
 [project.optional-dependencies]
 mysql = ["pymysql>=1.1"]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
-claude = ["anthropic>=1.0"]
+claude = ["anthropic>=2.12"]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
     "mypy>=1.10",
     "fastapi>=0.110",
     "uvicorn>=0.29",
-    "anthropic>=1.0",
+    "anthropic>=2.12",
     "pymysql>=1.1",
 ]
 

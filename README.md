@@ -97,7 +97,9 @@ Essai avec de vrais modèles locaux (Ollama 0.40, processeur seul à 4 cœurs, 1
 | `gemma3:4b` | 12 sur 12 | 12 à 16 s | conseils clairs, quelques maladresses de français |
 | `llama3.2` (3 milliards de paramètres) | 11 sur 12 | 8 à 15 s | plus vague, parfois confus ; le message rejeté recopiait le rapport |
 
-Limite : un petit modèle peut écrire une phrase approximative, voire contraire aux faits, sans aucun chiffre faux, et aucune vérification automatique ne le détecte. C'est la raison pour laquelle le modèle n'écrit qu'un court message et jamais le rapport lui-même : la première version, qui faisait réécrire tout le rapport, était rejetée une fois sur deux avec `llama3.2` et laissait passer des contresens (« tu as gagné 1 match sur 5 » pour un score 1/5/0). **Les chiffres du texte de base font foi.** L'API Claude n'a pas été essayée en conditions réelles.
+Limite : un petit modèle peut écrire une phrase approximative, voire contraire aux faits, sans aucun chiffre faux, et aucune vérification automatique ne le détecte. C'est la raison pour laquelle le modèle n'écrit qu'un court message et jamais le rapport lui-même : la première version, qui faisait réécrire tout le rapport, était rejetée une fois sur deux avec `llama3.2` et laissait passer des contresens (« tu as gagné 1 match sur 5 » pour un score 1/5/0). **Les chiffres du texte de base font foi.**
+
+L'API Claude n'a pas été appelée avec une vraie clé. Ce qui est vérifié : la requête construite par le vrai SDK `anthropic` (paramètres acceptés, en-têtes, corps), la lecture de ses réponses et de ses erreurs (clé refusée, débit, surcharge, panne réseau, page web renvoyée par un proxy), face à un serveur simulé. Ce qui ne l'est pas : la qualité du texte écrit par Claude et l'acceptation réelle de la requête par l'API.
 
 ## Ce que les modèles savent faire, et leurs limites
 
@@ -123,6 +125,8 @@ Limite : un petit modèle peut écrire une phrase approximative, voire contraire
 | Tolérance au format réel de Riot (champs et événements en plus, cas limites documentés) | vérifiée par `tests/test_format_reel.py`, sur des réponses **reconstruites d'après la documentation** |
 | Connexion au vrai serveur de Riot et lecture de ses refus | vérifiée (clé invalide → message clair, rien n'est enregistré) |
 | **Lecture de vraies parties avec une vraie clé** | **pas encore faite** : c'est le rôle de `lolcoach-collecte verifier` |
+| Mot du coach avec un vrai modèle local (Ollama, `gemma3:4b` et `llama3.2`) | vérifié de bout en bout, LoL Companion compris ; mesures plus haut |
+| Mot du coach avec l'API Claude | requêtes et erreurs vérifiées à travers le vrai SDK, face à un serveur simulé ; **jamais appelée avec une vraie clé** |
 | **Qualité des modèles sur de vraies parties** | **inconnue** : les chiffres de la démo viennent de parties simulées et ne disent rien du jeu réel. `lolcoach-entrainer` affiche les vraies mesures après une collecte |
 
 ## Sécurité et vie privée

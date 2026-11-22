@@ -176,11 +176,19 @@ class ClaudeProvider:
         except anthropic.APIError as exc:  # toute autre erreur du SDK (réponse invalide…)
             raise LLMError(f"erreur de l'API Claude ({type(exc).__name__})") from exc
 
-        if response.stop_reason == "refusal":
+        # Un intermédiaire (proxy d'entreprise, portail captif) peut répondre 200 avec une page
+        # web : le SDK rend alors du texte brut au lieu d'un message.
+        content = getattr(response, "content", None)
+        if not isinstance(content, list):
+            raise LLMError("réponse de l'API Claude illisible")
+        stop_reason = getattr(response, "stop_reason", None)
+        if stop_reason == "refusal":
             raise LLMError("le modèle a refusé de répondre")
-        if response.stop_reason == "max_tokens":
+        if stop_reason == "max_tokens":
             raise LLMError("réponse tronquée")
-        return "".join(block.text for block in response.content if block.type == "text")
+        return "".join(block.text for block in content
+                       if getattr(block, "type", None) == "text"
+                       and isinstance(getattr(block, "text", None), str))
 
 
 def provider_from_env() -> Provider | None:

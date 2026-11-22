@@ -324,6 +324,111 @@ def test_claude_provider_request_shape():
     assert surface == "stable" and "fallbacks" not in request and "betas" not in request
 
 
+# --- API Claude : à travers le vrai SDK, face à un serveur simulé ---
+# Le faux client ci-dessus accepte n'importe quel paramètre. Ici c'est le vrai SDK `anthropic`
+# qui construit la requête et lit la réponse : un paramètre qu'il ne connaît pas, ou une
+# réponse qu'il ne sait pas lire, fait échouer ces tests.
+
+CLAUDE_MESSAGE = {
+    "id": "msg_01", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
+    "content": [{"type": "thinking", "thinking": "…", "signature": "sig"},
+                {"type": "text", "text": "Garde ce cap sur le farm et regarde la carte."}],
+    "stop_reason": "end_turn", "stop_sequence": None,
+    "usage": {"input_tokens": 100, "output_tokens": 20},
+}
+
+
+def real_claude(handler, model=llm.DEFAULT_CLAUDE_MODEL):
+    anthropic = pytest.importorskip("anthropic")
+    httpx2 = pytest.importorskip("httpx2")  # bibliothèque HTTP du SDK
+    client = anthropic.Anthropic(
+        api_key="sk-ant-essai", max_retries=0, base_url="https://api.anthropic.com",
+        http_client=httpx2.Client(transport=httpx2.MockTransport(handler)))
+    return llm.ClaudeProvider(model, client=client), httpx2
+
+
+def test_claude_request_built_by_the_real_sdk():
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path, request.headers, json.loads(request.read())))
+        return httpx2.Response(200, json=CLAUDE_MESSAGE)
+
+    provider, httpx2 = real_claude(handler)
+    assert provider.complete("système", "question") == CLAUDE_MESSAGE["content"][1]["text"]
+    method, path, headers, body = seen[0]
+    assert (method, path) == ("POST", "/v1/messages")
+    assert headers["anthropic-beta"] == llm.FALLBACK_BETA
+    assert body == {
+        "model": "claude-opus-5-5", "max_tokens": llm.MAX_OUTPUT_TOKENS, "system": "système",
+        "messages": [{"role": "user", "content": "question"}],
+        "output_config": {"effort": "low"}, "fallbacks": "default",
+    }
+
+    # Modèle sans repli côté serveur : interface stable, ni en-tête bêta ni `fallbacks`.
+    provider, _ = real_claude(handler, "claude-haiku-5-5")
+    provider.complete("s", "u")
+    _, _, headers, body = seen[1]
+    assert "anthropic-beta" not in headers and "fallbacks" not in body
+    assert body["model"] == "claude-haiku-5-5" and body["output_config"] == {"effort": "low"}
+
+
+@pytest.mark.parametrize(("status", "kind", "message"), [
+    (401, "authentication_error", "absente ou refusée"),
+    (403, "permission_error", "absente ou refusée"),
+    (429, "rate_limit_error", "limite de débit"),
+    (400, "invalid_request_error", "a répondu 400"),
+    (404, "not_found_error", "a répondu 404"),
+    (500, "api_error", "a répondu 500"),
+    (529, "overloaded_error", "a répondu 529"),
+])
+def test_claude_http_errors_through_the_real_sdk(status, kind, message):
+    def handler(request):
+        return httpx2.Response(status, json={"type": "error",
+                                             "error": {"type": kind, "message": "x"}})
+
+    provider, httpx2 = real_claude(handler)
+    with pytest.raises(llm.LLMError, match=message):
+        provider.complete("s", "u")
+
+
+def test_claude_failures_through_the_real_sdk_keep_the_factual_text():
+    def unreachable(request):
+        raise httpx2.ConnectError("refusé")
+
+    def too_slow(request):
+        raise httpx2.ReadTimeout("trop long")
+
+    def web_page(request):  # proxy ou portail captif : 200, mais pas l'API
+        return httpx2.Response(200, content=b"<html>Connexion requise</html>",
+                               headers={"content-type": "text/html"})
+
+    def refusal(request):
+        return httpx2.Response(200, json={**CLAUDE_MESSAGE, "content": [],
+                                          "stop_reason": "refusal"})
+
+    def cut_short(request):
+        return httpx2.Response(200, json={**CLAUDE_MESSAGE, "stop_reason": "max_tokens"})
+
+    def thinking_only(request):
+        return httpx2.Response(200, json={**CLAUDE_MESSAGE,
+                                          "content": CLAUDE_MESSAGE["content"][:1]})
+
+    _, httpx2 = real_claude(web_page)
+    for handler, reason in ((unreachable, "injoignable"), (too_slow, "injoignable"),
+                            (web_page, "illisible"), (refusal, "refusé"),
+                            (cut_short, "tronquée"), (thinking_only, "vide ou trop longue")):
+        provider, _ = real_claude(handler)
+        result = llm.rewrite(REFERENCE, provider)
+        assert not result.used_llm and result.text == REFERENCE and reason in result.reason
+
+    # Réponse normale : le mot du coach est ajouté après les faits.
+    provider, _ = real_claude(lambda request: httpx2.Response(200, json=CLAUDE_MESSAGE))
+    result = llm.rewrite(REFERENCE, provider)
+    assert result.used_llm and result.text.startswith(REFERENCE)
+    assert result.coach_note == CLAUDE_MESSAGE["content"][1]["text"]
+
+
 def test_claude_provider_errors():
     import anthropic
 
