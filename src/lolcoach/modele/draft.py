@@ -63,6 +63,14 @@ class DraftModel:
     def __post_init__(self) -> None:
         self._index = {int(name): i for i, name in enumerate(self.model.features)}
 
+    @property
+    def useful(self) -> bool:
+        """Vrai s'il prédit mieux que la référence naïve sur les parties de test (perte
+        logarithmique plus basse). Il faut des dizaines de milliers de parties pour y arriver :
+        sur 446 vraies parties, il faisait moins bien que la référence."""
+        loss, reference = self.metrics.get("log_loss"), self.metrics.get("log_loss_reference")
+        return loss is not None and reference is not None and loss < reference
+
     def predict_blue_win(self, blue: list[int], red: list[int]) -> float:
         """Probabilité que l'équipe bleue gagne. Un champion inconnu du modèle compte pour 0."""
         return float(self.model.predict_proba(_encode(self._index, blue, red))[0])

@@ -99,11 +99,15 @@ class Coach:
         return self._benchmarks.get()
 
     def winprob(self) -> WinProbModel | None:
-        """Facultatif : sans lui, les rapports n'ont pas de moments clés chiffrés."""
-        return self._winprob.get() if self._winprob.available() else None
+        """Facultatif : sans lui, les rapports n'ont pas de moments clés chiffrés. Un modèle
+        qui ne prédit pas mieux que la référence naïve est ignoré : ses coûts seraient du bruit."""
+        if not self._winprob.available():
+            return None
+        model = self._winprob.get()
+        return model if model.useful else None
 
     def models_status(self) -> dict[str, bool]:
-        return {"reperes": self._benchmarks.available(), "victoire": self._winprob.available()}
+        return {"reperes": self._benchmarks.available(), "victoire": self.winprob() is not None}
 
     def _finish(self, text: str, use_llm: bool) -> tuple[str, bool, str | None, str | None]:
         """(texte, mot du coach ajouté ?, raison de son absence, mot du coach seul)."""

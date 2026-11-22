@@ -117,6 +117,13 @@ class WinProbModel:
     n_matches: int = 0
     trained_at: str = ""
 
+    @property
+    def useful(self) -> bool:
+        """Vrai s'il prédit mieux que la référence naïve sur les parties de test (score de
+        Brier plus bas). Sinon, le coût des morts qu'il donnerait ne voudrait rien dire."""
+        brier, reference = self.metrics.get("brier"), self.metrics.get("brier_reference")
+        return brier is not None and reference is not None and brier < reference
+
     def predict(self, ts_ms: np.ndarray, x: np.ndarray) -> np.ndarray:
         """Probabilité de victoire des bleus pour chaque état."""
         minutes = np.asarray(ts_ms, dtype=float) / MINUTE_MS

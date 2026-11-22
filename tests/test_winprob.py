@@ -108,3 +108,44 @@ def test_match_without_timeline_has_empty_curve(demo):
     match = make_data()
     match.frame_ts = np.zeros(0, dtype=np.int64)
     assert len(demo.winprob.curve(match)) == 0
+
+
+# --- un modèle qui ne bat pas la référence naïve n'est ni enregistré ni utilisé ---
+# Vu sur de vraies parties : avec 446 parties, le modèle de draft faisait moins bien que la
+# référence (54,5 % contre 58,0 %), mais l'entraînement affichait quand même ses « champions
+# les plus forts ».
+
+def useless(model):
+    """Copie du modèle dont les mesures disent qu'il ne bat pas la référence."""
+    copy = WinProbModel(model.centers_min, model.models, dict(model.metrics),
+                        dict(model.by_bucket), model.n_matches, model.trained_at)
+    copy.metrics["brier"] = copy.metrics["brier_reference"] + 0.01
+    return copy
+
+
+def test_useful_requires_beating_the_reference(demo):
+    assert demo.winprob.useful
+    assert not useless(demo.winprob).useful
+    assert not WinProbModel([10.0], demo.winprob.models[:1]).useful  # mesures absentes
+
+
+def test_training_does_not_save_a_useless_model(demo, tmp_path, capsys):
+    from lolcoach.modele import cli as training
+
+    path = tmp_path / training.WINPROB_FILE
+    assert not training._step("Victoire", path, lambda: useless(demo.winprob), lambda m: None)
+    assert not path.exists() and "Non enregistré" in capsys.readouterr().out
+    assert training._step("Victoire", path, lambda: demo.winprob, lambda m: None)
+    assert path.exists()
+
+
+def test_coach_ignores_a_useless_model_file(demo, tmp_path):
+    from lolcoach.coach.service import Coach
+    from lolcoach.modele import cli as training
+
+    demo.benchmarks.save(tmp_path / training.BENCHMARKS_FILE)
+    useless(demo.winprob).save(tmp_path / training.WINPROB_FILE)
+    coach = Coach(demo.engine, tmp_path)
+    assert coach.winprob() is None and coach.models_status()["victoire"] is False
+    report = coach.report(demo.puuid).report
+    assert report is not None and report.deaths_cost_points == 0  # pas de coûts inventés

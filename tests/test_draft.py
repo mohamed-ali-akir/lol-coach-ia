@@ -72,3 +72,20 @@ def test_corrupted_model_file_is_rejected(tmp_path):
     path.write_text(json.dumps({"format": 1, "kind": "draft", "model": {}}), encoding="utf-8")
     with pytest.raises(ArtifactError):
         DraftModel.load(path)
+
+
+def test_a_draft_model_worse_than_the_reference_is_not_shown(engine, capsys):
+    """Vu sur 446 vraies parties : 54,5 % de bonnes prédictions contre 58,0 % pour la
+    référence naïve. Ses « champions les plus forts » ne veulent alors rien dire."""
+    from lolcoach.modele import cli as training
+
+    fill_db(engine, 600)
+    model = train_draft_model(*load_drafts(engine))
+    assert model.useful
+    training.print_draft(model)
+    assert "Champions les plus forts" in capsys.readouterr().out
+
+    model.metrics["log_loss"] = model.metrics["log_loss_reference"] + 0.01
+    assert not model.useful
+    training.print_draft(model)
+    assert "Champions les plus forts" not in capsys.readouterr().out

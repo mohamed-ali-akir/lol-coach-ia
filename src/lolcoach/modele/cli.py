@@ -51,8 +51,15 @@ M = TypeVar("M", bound=_Saveable)
 T = TypeVar("T")
 
 
+NOT_USEFUL = ("  Non enregistré : ce modèle ne prédit pas mieux que la référence naïve sur les "
+              "parties de test.\n  Il faut plus de parties. Un modèle sans valeur ferait plus de "
+              "mal que de bien.")
+
+
 def _step(title: str, path: Path, train: Callable[[], M], show: Callable[[M], None]) -> bool:
-    """Entraîne, affiche et enregistre un modèle. Renvoie False s'il manque des données."""
+    """Entraîne, affiche et enregistre un modèle. Renvoie False s'il manque des données ou
+    si le modèle ne fait pas mieux qu'une prédiction naïve (il n'est alors pas enregistré :
+    un fichier plus ancien éventuel est laissé tel quel)."""
     print(f"\n{title}")
     try:
         model = train()
@@ -60,6 +67,9 @@ def _step(title: str, path: Path, train: Callable[[], M], show: Callable[[M], No
         print(f"  Non entraîné : {exc}")
         return False
     show(model)
+    if getattr(model, "useful", True) is False:
+        print(NOT_USEFUL)
+        return False
     model.save(path)
     print(f"  Enregistré dans {path}")
     return True
@@ -128,6 +138,8 @@ def print_draft(model: DraftModel) -> None:
           f"{m['parties_test']:.0f} parties plus récentes.")
     print(f"  Précision : {_pct(m['precision'])} (référence naïve : "
           f"{_pct(m['precision_reference'])})")
+    if not model.useful:
+        return  # classer les champions d'après un modèle sans valeur induirait en erreur
     print("  Champions les plus forts : "
           + ", ".join(f"{name} ({weight:+.2f})" for name, weight in report["plus_forts"]))
     print("  Champions les plus faibles : "
