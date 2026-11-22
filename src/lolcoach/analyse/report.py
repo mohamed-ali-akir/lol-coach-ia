@@ -16,10 +16,10 @@ from sqlalchemy import Engine
 from lolcoach.analyse.benchmarks import Benchmarks
 from lolcoach.analyse.data import MatchData, load_match
 from lolcoach.analyse.deaths import (
-    CATEGORY_ADVICE,
     Death,
     classify_deaths,
     clock,
+    death_advice,
     death_costs,
 )
 from lolcoach.analyse.metrics import METRICS_BY_KEY, compute_game
@@ -86,7 +86,7 @@ class MatchReport:
     weaknesses: list[StatLine] = field(default_factory=list)
 
 
-def _moment(death: Death) -> Moment:
+def _moment(death: Death, role: str) -> Moment:
     return Moment(
         clock=death.clock,
         ts=death.ts,
@@ -98,7 +98,7 @@ def _moment(death: Death) -> Moment:
         cost_points=float(death.cost or 0.0) * 100,
         team_deaths=death.team_deaths,
         objective=death.objective_label,
-        advice=CATEGORY_ADVICE.get(death.category, ""),
+        advice=death_advice(death.category, role),
     )
 
 
@@ -124,7 +124,7 @@ def _stat_lines(match: MatchData, pid: int, benchmarks: Benchmarks | None
             value_text=metric.format(value),
             reference_text=None if median is None else metric.format(median),
             percentile=percentile,
-            advice=metric.advice,
+            advice=metric.advice_for(game.role),
         ))
     strengths = sorted((line for line in lines if line.percentile >= STRENGTH_PERCENTILE),
                        key=lambda line: -line.percentile)[:2]
@@ -173,7 +173,7 @@ def report_for(match: MatchData, puuid: str, benchmarks: Benchmarks | None,
     report.deaths_cost_points = float(sum(d.cost or 0.0 for d in deaths)) * 100
     costly = sorted((d for d in deaths if (d.cost or 0.0) >= MIN_MOMENT_COST),
                     key=lambda d: -(d.cost or 0.0))[:MAX_MOMENTS]
-    report.moments = [_moment(d) for d in sorted(costly, key=lambda d: d.ts)]
+    report.moments = [_moment(d, report.role) for d in sorted(costly, key=lambda d: d.ts)]
     return report
 
 

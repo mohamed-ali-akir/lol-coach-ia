@@ -1,6 +1,7 @@
 """Chargement des parties, statistiques, repères et diagnostic."""
 
 import json
+import re
 
 import numpy as np
 import pytest
@@ -205,3 +206,46 @@ def test_diagnostic_reliability_levels(demo):
     assert diagnose(games, demo.benchmarks, demo.puuid).reliability == "faible"
     games = mt.player_games(demo.engine, demo.puuid, 15)
     assert diagnose(games, demo.benchmarks, demo.puuid, tier="DIAMOND").benchmark_tier == "ALL"
+
+
+# --- conseils selon le poste ---
+# Vu sur de vraies parties : un jungler recevait « reviens toujours sur une vague de sbires »
+# et « ne quitte pas ta lane », et une partie jouée top recevait l'axe de travail du jungler.
+
+LANE_WORDS = re.compile(r"\b(vagues?|lane|sbires?)\b|tour adverse")  # « laners » est permis
+
+
+def test_jungle_advice_never_talks_about_lanes_or_waves():
+    for metric in mt.METRICS:
+        if "JUNGLE" not in metric.roles:
+            continue
+        for text in (metric.advice_for("JUNGLE"), metric.drill_for("JUNGLE")):
+            assert not LANE_WORDS.search(text.lower()), (metric.key, text)
+    assert mt.family_label("lane", "JUNGLE") == "Début de partie"
+    assert mt.family_label("lane", "MIDDLE") == "Phase de lane"
+    farm = mt.METRICS_BY_KEY["cs_per_min"]
+    assert farm.advice_for("MIDDLE") == farm.advice  # les autres postes gardent le conseil
+    assert farm.advice_for(None) == farm.advice
+
+
+def test_jungle_death_advice():
+    from lolcoach.analyse import deaths as d
+
+    assert not LANE_WORDS.search(d.death_advice(d.ISOLATED, "JUNGLE").lower())
+    assert d.death_advice(d.ISOLATED, "TOP") == d.CATEGORY_ADVICE[d.ISOLATED]
+    assert d.death_advice("INCONNUE", "TOP") == ""
+
+
+def test_report_focus_only_for_a_game_played_in_the_diagnosed_role(demo):
+    from lolcoach.coach.service import Coach
+
+    coach = Coach(demo.engine, demo.models_dir)
+    diagnostic = coach.diagnostic(demo.puuid).diagnostic
+    assert diagnostic.priorities
+    same_role = coach.report(demo.puuid)
+    assert same_role.report.role == diagnostic.role
+    assert "Ton axe de travail du moment" in same_role.text
+
+    other = Coach(demo.engine, demo.models_dir)
+    other._diagnose = lambda *a, **k: type(diagnostic)(**{**vars(diagnostic), "role": "TOP"})
+    assert "Ton axe de travail du moment" not in other.report(demo.puuid).text

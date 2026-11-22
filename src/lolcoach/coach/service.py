@@ -211,8 +211,11 @@ class Coach:
         focus = None
         if benchmarks is not None:
             try:
-                priorities = self._diagnose(puuid).priorities
-                focus = priorities[0] if priorities else None
+                diagnostic = self._diagnose(puuid)
+                # Un axe de travail calculé au poste principal ne vaut pas pour une partie
+                # jouée à un autre poste (vu sur de vraies parties : un jungler jouant top).
+                if diagnostic.priorities and diagnostic.role == report.role:
+                    focus = diagnostic.priorities[0]
             except DiagnosticError:
                 focus = None  # pas assez de parties : le rapport reste valable sans
         goal_lines = goals_module.render_goals(self.goals(puuid))

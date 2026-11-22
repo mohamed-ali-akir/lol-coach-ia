@@ -39,7 +39,7 @@ CATEGORY_LABELS = {
     EXECUTION: "exécution (tour ou sbires)",
     TEAMFIGHT: "combat d'équipe",
     GANK: "gank subi",
-    ISOLATED: "pris seul",
+    ISOLATED: "pris seul à plusieurs",
     OUTNUMBERED: "en infériorité numérique",
     DUEL: "duel perdu",
     SKIRMISH: "escarmouche",
@@ -59,6 +59,19 @@ CATEGORY_ADVICE = {
           "recharge) et évite ce combat tant que le rapport de force n'a pas changé.",
     SKIRMISH: "Regarde l'état de ta vie et de ta vague avant de rejoindre une escarmouche.",
 }
+
+# Conseils propres à un poste, quand le conseil général ne s'y applique pas (vu sur de vraies
+# parties : un jungler recevait « reste près de ta vague »).
+CATEGORY_ADVICE_BY_ROLE = {
+    ("JUNGLE", ISOLATED): "N'entre pas seul dans la jungle adverse sans vision : attends qu'un "
+                          "laner puisse te suivre, ou reste dans ta moitié de carte.",
+}
+
+
+def death_advice(category: str, role: str | None) -> str:
+    """Conseil pour une catégorie de mort, adapté au poste du joueur s'il le faut."""
+    return CATEGORY_ADVICE_BY_ROLE.get((role or "", category), CATEGORY_ADVICE.get(category, ""))
+
 
 OBJECTIVE_LABELS = {
     "DRAGON": "un dragon",
@@ -139,7 +152,7 @@ def classify_deaths(match: MatchData, pid: int) -> list[Death]:
     1. exécution : aucun champion n'a porté le coup fatal ;
     2. combat d'équipe : au moins 3 morts (les deux équipes) à moins de 15 s ;
     3. gank subi : avant 15 min, au moins 2 adversaires dont leur jungler ;
-    4. pris seul : au moins 2 adversaires et aucun allié à moins de 2 000 unités ;
+    4. pris seul à plusieurs : au moins 2 adversaires et aucun allié à moins de 2 000 unités ;
     5. infériorité numérique : plus d'adversaires que d'alliés présents ;
     6. duel perdu : un seul adversaire ;
     7. escarmouche : le reste.

@@ -51,7 +51,8 @@ def test_report_facts_cite_the_right_minutes():
     assert report.story == "throw" and report.peak_wp == pytest.approx(0.80)
     assert [m.clock for m in report.moments] == ["10:20", "22:05"]  # ordre chronologique
     first, second = report.moments
-    assert first.label == "pris seul" and first.enemies == 2 and first.allies_nearby == 0
+    assert first.label == "pris seul à plusieurs"
+    assert first.enemies == 2 and first.allies_nearby == 0
     assert first.wp_before == pytest.approx(0.80) and first.wp_after == pytest.approx(0.70)
     assert first.cost_points == pytest.approx(10.0) and first.team_deaths == 1
     assert second.label == "duel perdu" and second.cost_points == pytest.approx(40.0)
@@ -95,7 +96,7 @@ def test_rendered_report_contains_every_fact():
 
     assert "Champ3 (mid), défaite en 30:00, 2/2/4." in text
     assert "jusqu'à 80 % de chances de gagner" in text
-    assert "- 10:20, pris seul : 2 adversaires sur toi, aucun allié à portée." in text
+    assert "- 10:20, pris seul à plusieurs : 2 adversaires sur toi, aucun allié à portée." in text
     assert "passent de 80 % à 70 % (coût estimé : 10 points)" in text
     assert "- 22:05, duel perdu : 1 adversaire sur toi" in text
     assert "environ 50 points" in text

@@ -15,9 +15,9 @@ from sqlalchemy import Engine
 from lolcoach import db
 from lolcoach.analyse.benchmarks import ALL_TIERS, Benchmarks
 from lolcoach.analyse.metrics import (
-    FAMILY_LABELS,
     GameMetrics,
     Metric,
+    family_label,
     metrics_for,
     player_games,
 )
@@ -124,7 +124,7 @@ def _finding(metric: Metric, games: list[GameMetrics], benchmarks: Benchmarks,
         metric=metric.key,
         label=metric.label,
         family=metric.family,
-        family_label=FAMILY_LABELS[metric.family],
+        family_label=family_label(metric.family, role),
         value=value,
         value_text=metric.format(value),
         reference=reference,
@@ -135,8 +135,8 @@ def _finding(metric: Metric, games: list[GameMetrics], benchmarks: Benchmarks,
         importance=importance,
         priority=importance * (50.0 - percentile) / 50.0 if significant else 0.0,
         n_games=count,
-        advice=metric.advice,
-        drill=metric.drill,
+        advice=metric.advice_for(role),
+        drill=metric.drill_for(role),
         worst_games=[(s[0].match_id, s[1]) for s in worst],
     )
 

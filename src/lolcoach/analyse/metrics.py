@@ -37,6 +37,15 @@ class Metric:
     drill: str  # comment s'entraîner
     roles: tuple[str, ...] = ROLES
     decimals: int = 1
+    # Conseils propres à un poste, quand le conseil général ne s'y applique pas :
+    # (poste, en partie, pour s'entraîner).
+    role_advice: tuple[tuple[str, str, str], ...] = ()
+
+    def advice_for(self, role: str | None) -> str:
+        return next((advice for r, advice, _ in self.role_advice if r == role), self.advice)
+
+    def drill_for(self, role: str | None) -> str:
+        return next((drill for r, _, drill in self.role_advice if r == role), self.drill)
 
     @property
     def family(self) -> str:
@@ -139,25 +148,51 @@ METRICS: tuple[Metric, ...] = (
            "Entre deux actions, reviens toujours sur une vague de sbires plutôt que d'errer.",
            "10 minutes par jour en outil d'entraînement : dernier coup sur chaque sbire, sans "
            "objets ni sorts.",
-           roles=FARMERS),
+           roles=FARMERS,
+           role_advice=(("JUNGLE",
+                         "Entre deux ganks ou objectifs, enchaîne les camps disponibles plutôt "
+                         "que d'attendre en rivière.",
+                         "En outil d'entraînement, chronomètre ton premier tour de jungle "
+                         "complet et bats ton temps à chaque essai."),)),
     Metric("cs_at_10", "Sbires à 10 minutes", "", True, _cs_at_10,
            "En phase de lane, ne lâche un sbire que pour éviter des dégâts ou prendre un kill "
            "sûr.",
            "En outil d'entraînement, vise 80 sbires à 10 minutes, puis 85.",
-           roles=FARMERS, decimals=0),
+           roles=FARMERS, decimals=0,
+           role_advice=(("JUNGLE",
+                         "Fais un premier tour de jungle complet avant de chercher un gank, "
+                         "sauf occasion évidente.",
+                         "Garde les minuteurs de tes camps en tête et reprends chaque camp dès "
+                         "sa réapparition."),)),
     Metric("gold_diff_15", "Écart d'or à 15 min face à ton adversaire direct", "or", True,
            _diff_at_15("gold"),
            "Joue ta phase de lane pour l'avance : échange quand ta vague est plus grosse, "
            "rentre à la base sur une vague poussée.",
            "Revois tes 5 premières minutes en replay : repère chaque retour à la base et ce "
            "qu'il t'a fait perdre.",
-           decimals=0),
+           decimals=0,
+           role_advice=(("JUNGLE",
+                         "Suis le jungler adverse : prends ses camps quand il est de l'autre "
+                         "côté de la carte, et sois là où il va ganker.",
+                         "Revois tes 5 premières minutes en replay : note où était le jungler "
+                         "adverse et où tu étais."),)),
     Metric("xp_diff_15", "Écart d'XP à 15 min face à ton adversaire direct", "XP", True,
            _diff_at_15("xp"),
            "Ne quitte pas ta lane quand une vague arrive sous ta tour : chaque vague perdue "
            "est un niveau de retard.",
            "Avant chaque déplacement, pousse ta vague sous la tour adverse.",
-           decimals=0),
+           decimals=0,
+           role_advice=(
+               ("JUNGLE",
+                "Ne laisse pas un camp réapparaître sans le prendre : chaque camp oublié est "
+                "de l'XP de retard sur le jungler adverse.",
+                "Garde les minuteurs de tes camps en tête et reprends chaque camp dès sa "
+                "réapparition."),
+               ("UTILITY",
+                "Reste à portée de ta vague pendant la phase de lane : l'XP des sbires ne "
+                "compte que si tu es à côté.",
+                "Avant chaque roam, attends que ta vague soit poussée sous la tour adverse."),
+           )),
     Metric("deaths_per_10", "Morts par 10 minutes", "", False, _deaths_per_10,
            "Avant d'avancer, demande-toi où sont les adversaires que tu ne vois pas.",
            "Fixe-toi un maximum de 4 morts par partie pendant 5 parties, quitte à jouer "
@@ -165,11 +200,22 @@ METRICS: tuple[Metric, ...] = (
     Metric("early_deaths", "Morts avant 15 minutes", "", False, _early_deaths,
            "Une mort en début de partie offre de l'or et une vague entière : joue plus loin "
            "de la tour adverse tant que tu n'as pas de vision.",
-           "Pose ta première balise avant 3 minutes à chaque partie."),
-    Metric("isolated_deaths", "Morts seul, loin de ton équipe", "", False, _isolated_deaths,
+           "Pose ta première balise avant 3 minutes à chaque partie.",
+           role_advice=(("JUNGLE",
+                         "Une mort en début de partie offre de l'or et ta jungle à l'adversaire "
+                         ": n'envahis pas sans savoir où est le jungler adverse.",
+                         "Avant chaque invasion, regarde sur la mini-carte où sont les laners "
+                         "adverses."),)),
+    Metric("isolated_deaths", "Morts seul face à plusieurs adversaires", "", False,
+           _isolated_deaths,
            deaths_module.CATEGORY_ADVICE[deaths_module.ISOLATED],
            "Après 15 minutes, regarde la mini-carte avant chaque déplacement : si aucun allié "
-           "n'est à portée, fais demi-tour."),
+           "n'est à portée, fais demi-tour.",
+           role_advice=(("JUNGLE",
+                         deaths_module.CATEGORY_ADVICE_BY_ROLE[("JUNGLE",
+                                                                deaths_module.ISOLATED)],
+                         "Avant d'entrer dans la jungle adverse, compte les adversaires "
+                         "visibles sur la mini-carte."),)),
     Metric("time_dead_pct", "Temps passé mort", "%", False, _time_dead_pct,
            "En fin de partie une mort dure plus de 40 secondes : ne te bats que si l'enjeu "
            "(objectif, tour) le justifie.",
@@ -199,7 +245,12 @@ METRICS: tuple[Metric, ...] = (
            "rejoins ton équipe.",
            "Garde les minuteurs d'objectifs sous les yeux (touche Tab) et annonce-les 1 minute "
            "avant.",
-           decimals=0),
+           decimals=0,
+           role_advice=(("JUNGLE",
+                         "Une minute avant l'apparition d'un dragon ou du Baron, place-toi près "
+                         "de l'objectif et préviens ton équipe.",
+                         "Garde les minuteurs d'objectifs sous les yeux (touche Tab) et "
+                         "organise ton tour de jungle pour finir près du prochain."),)),
 )
 METRICS_BY_KEY = {m.key: m for m in METRICS}
 
@@ -228,6 +279,13 @@ FAMILY_OF = {
     "vision_per_min": "vision",
     "control_wards": "vision",
 }
+
+
+def family_label(family: str, role: str | None) -> str:
+    """Nom du thème pour ce poste : un jungler n'a pas de « phase de lane »."""
+    if family == "lane" and role == "JUNGLE":
+        return "Début de partie"
+    return FAMILY_LABELS[family]
 
 
 def metrics_for(role: str) -> list[Metric]:
