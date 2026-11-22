@@ -109,7 +109,9 @@ Probabilité de victoire de l'équipe à la dernière photo avant la mort, moins
 
 ### Classement des morts
 
-Règles simples, appliquées dans l'ordre (voir `classify_deaths`). La distance de 2 000 unités pour « un allié est à côté » est celle des statistiques e-sport de Riot. Les positions étant interpolées entre deux photos, « pris seul » signifie « probablement seul ».
+Règles simples, appliquées dans l'ordre (voir `classify_deaths`) : exécution, combat d'équipe (au moins 3 morts à moins de 15 s **et** de 3 000 unités), gank, pris seul à plusieurs, infériorité numérique, duel perdu (un adversaire **et** aucun allié à côté), escarmouche. La distance de 2 000 unités pour « un allié est à côté » est celle des statistiques e-sport de Riot. Les positions étant interpolées entre deux photos, « pris seul » signifie « probablement seul ».
+
+Deux règles ont été corrigées après lecture de rapports sur de vraies parties : trois morts simultanées aux deux bouts de la carte passaient pour un combat d'équipe, et une mort face à un seul adversaire avec deux alliés à côté passait pour un duel.
 
 ## Faire évoluer le projet
 

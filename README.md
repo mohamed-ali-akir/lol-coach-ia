@@ -5,7 +5,7 @@ Un coach pour League of Legends qui repose sur **des modèles entraînés maison
 Il fait ce que fait un coach :
 
 1. **Il diagnostique** : tes statistiques comparées à celles des joueurs de ton rang et de ton rôle, et **3 priorités au plus**, une par thème (farm, phase de lane, survie, vision, jeu en équipe, combat). Un retard ne devient une priorité que s'il est net et qu'il ne peut guère venir du hasard : un joueur dans la moyenne n'en reçoit en général aucune.
-2. **Il montre les moments clés** : chaque mort est classée (prise seul, gank, duel perdu…) et chiffrée en points de probabilité de victoire, **à la minute près**.
+2. **Il montre les moments clés** : chaque mort est classée (pris seul à plusieurs, gank, duel perdu…) et chiffrée en points de probabilité de victoire, **à la minute près**.
 3. **Il donne un conseil et un exercice** pour chaque point faible.
 4. **Il fixe des objectifs** (« 5,3 de farm par minute sur tes 10 prochaines parties ») et vérifie s'ils sont tenus.
 
@@ -18,7 +18,7 @@ Le fil de la partie
 Ton équipe a eu jusqu'à 86 % de chances de gagner (à 16:40) avant de laisser filer la partie.
 
 Les moments qui ont coûté le plus cher
-- 6:28, duel perdu : 1 adversaire sur toi, 3 alliés à portée. Les chances de victoire de ton équipe
+- 6:28, duel perdu : 1 adversaire sur toi, aucun allié à portée. Les chances de victoire de ton équipe
   passent de 55 % à 46 % (coût estimé : 9 points). L'adversaire prend un dragon dans la foulée.
   À retenir : Note ce qui a fait perdre le duel (niveau, objets, sorts d'invocateur en recharge)…
 ```

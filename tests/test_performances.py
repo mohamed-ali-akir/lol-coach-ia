@@ -35,6 +35,14 @@ def test_teamfight_counts_match_the_brute_force_definition(demo):
                     for kill in kills]
         assert list(match.kills_around(d.TEAMFIGHT_WINDOW_MS)) == expected
 
+        def near(a, b):
+            return a is b or (a.x is not None and b.x is not None
+                              and (a.x - b.x) ** 2 + (a.y - b.y) ** 2 <= d.TEAMFIGHT_RADIUS ** 2)
+
+        expected = [sum(abs(o.ts - k.ts) <= d.TEAMFIGHT_WINDOW_MS and near(o, k) for o in kills)
+                    for k in kills]
+        assert list(match.kills_around(d.TEAMFIGHT_WINDOW_MS, d.TEAMFIGHT_RADIUS)) == expected
+
 
 def test_objective_lookup_matches_a_full_scan(demo):
     def full_scan(match, enemy_team, ts):

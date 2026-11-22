@@ -23,6 +23,9 @@ from lolcoach.analyse.data import MatchData
 NEARBY_RADIUS = 2000  # unités de carte
 TEAMFIGHT_WINDOW_MS = 15_000
 TEAMFIGHT_MIN_DEATHS = 3
+# Les morts d'un même combat sont proches dans l'espace aussi : sur de vraies parties, trois
+# morts simultanées aux deux bouts de la carte étaient comptées comme un combat d'équipe.
+TEAMFIGHT_RADIUS = 3000
 EARLY_GAME_MS = 15 * 60_000
 OBJECTIVE_WINDOW_MS = 90_000
 COST_WINDOW_MS = 120_000  # on regarde la probabilité de victoire 2 minutes après la mort
@@ -150,15 +153,16 @@ def classify_deaths(match: MatchData, pid: int) -> list[Death]:
     """Classe chaque mort du joueur. Règles, appliquées dans cet ordre :
 
     1. exécution : aucun champion n'a porté le coup fatal ;
-    2. combat d'équipe : au moins 3 morts (les deux équipes) à moins de 15 s ;
+    2. combat d'équipe : au moins 3 morts (les deux équipes) à moins de 15 s et de
+       3 000 unités ;
     3. gank subi : avant 15 min, au moins 2 adversaires dont leur jungler ;
     4. pris seul à plusieurs : au moins 2 adversaires et aucun allié à moins de 2 000 unités ;
     5. infériorité numérique : plus d'adversaires que d'alliés présents ;
-    6. duel perdu : un seul adversaire ;
+    6. duel perdu : un seul adversaire et aucun allié à côté ;
     7. escarmouche : le reste.
     """
     kills = match.kills()
-    kills_around = match.kills_around(TEAMFIGHT_WINDOW_MS)
+    kills_around = match.kills_around(TEAMFIGHT_WINDOW_MS, TEAMFIGHT_RADIUS)
     team = match.team(pid)
     enemy_team = 300 - team
     deaths = []
@@ -183,7 +187,9 @@ def classify_deaths(match: MatchData, pid: int) -> list[Death]:
             category = ISOLATED
         elif enemies >= 2 and allies is not None and allies + 1 < enemies:
             category = OUTNUMBERED
-        elif enemies == 1:
+        elif enemies == 1 and not allies:
+            # Avec un allié à côté, ce n'est pas un duel (vu sur de vraies parties :
+            # « duel perdu, 2 alliés à portée »).
             category = DUEL
         else:
             category = SKIRMISH

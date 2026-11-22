@@ -55,6 +55,24 @@ def test_duel_and_teamfight():
     assert category(spread) == [d.DUEL]
 
 
+def test_teamfight_deaths_must_be_close_on_the_map():
+    """Vu sur de vraies parties : trois morts simultanées aux deux bouts de la carte."""
+    late = 20 * 60_000
+    elsewhere = [kill(late, ME, 8), kill(late + 5_000, 4, 9, x=13000, y=2000),
+                 kill(late + 8_000, 8, 1, x=2000, y=13000)]
+    assert category(elsewhere) == [d.DUEL]
+    nearby = [kill(late, ME, 8), kill(late + 5_000, 4, 9, x=6500, y=6000),
+              kill(late + 8_000, 8, 1, x=4000, y=6500)]
+    assert category(nearby) == [d.TEAMFIGHT]
+
+
+def test_one_killer_with_an_ally_next_to_you_is_not_a_duel():
+    """Vu sur de vraies parties : « duel perdu : 1 adversaire sur toi, 2 alliés à portée »."""
+    late = 20 * 60_000
+    assert category([kill(late, ME, 8)], allies_near=2) == [d.SKIRMISH]
+    assert category([kill(late, ME, 8)], allies_near=0) == [d.DUEL]
+
+
 def test_objective_lost_within_90_seconds():
     late = 20 * 60_000
     dragon = Event(late + 60_000, db.EVENT_MONSTER, 200, 7, 0, (), None, None, "DRAGON",

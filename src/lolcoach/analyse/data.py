@@ -54,7 +54,8 @@ class MatchData:
     events: list[Event] = field(default_factory=list)
     # Calculs faits une seule fois par partie, puis réutilisés pour chacun des 10 joueurs.
     _kills: list[Event] | None = field(default=None, repr=False, compare=False)
-    _kills_around: np.ndarray | None = field(default=None, repr=False, compare=False)
+    _kills_around: dict[tuple[int, int | None], np.ndarray] = field(
+        default_factory=dict, repr=False, compare=False)
     _objectives: tuple[np.ndarray, list[Event]] | None = field(default=None, repr=False,
                                                                compare=False)
 
@@ -119,15 +120,35 @@ class MatchData:
             self._kills = [e for e in self.events if e.type == db.EVENT_KILL]
         return self._kills
 
-    def kills_around(self, window_ms: int) -> np.ndarray:
+    def kills_around(self, window_ms: int, radius: int | None = None) -> np.ndarray:
         """Pour chaque mort (même ordre que `kills()`), le nombre de morts survenues à moins
-        de `window_ms`, elle comprise. Recherche dans la liste triée : pas de comparaison de
-        chaque mort avec toutes les autres."""
-        if self._kills_around is None:
-            ts = np.fromiter((k.ts for k in self.kills()), dtype=np.int64)
-            self._kills_around = (np.searchsorted(ts, ts + window_ms, side="right")
-                                  - np.searchsorted(ts, ts - window_ms, side="left"))
-        return self._kills_around
+        de `window_ms`, elle comprise, et, si `radius` est donné, à moins de `radius` unités
+        de carte (une mort sans position ne compte que pour elle-même). Recherche dans la
+        liste triée : seules les morts proches dans le temps sont comparées entre elles."""
+        key = (window_ms, radius)
+        if key not in self._kills_around:
+            kills = self.kills()
+            ts = np.fromiter((k.ts for k in kills), dtype=np.int64)
+            low = np.searchsorted(ts, ts - window_ms, side="left")
+            high = np.searchsorted(ts, ts + window_ms, side="right")
+            if radius is None:
+                counts = high - low
+            else:
+                limit = radius * radius
+                counts = np.ones(len(kills), dtype=np.int64)
+                for i, kill in enumerate(kills):
+                    x, y = kill.x, kill.y
+                    if x is None or y is None:
+                        continue
+                    near = 0
+                    for j in range(int(low[i]), int(high[i])):
+                        ox, oy = kills[j].x, kills[j].y
+                        if j != i and ox is not None and oy is not None \
+                                and (ox - x) ** 2 + (oy - y) ** 2 <= limit:
+                            near += 1
+                    counts[i] = near + 1
+            self._kills_around[key] = counts
+        return self._kills_around[key]
 
     def objectives(self) -> tuple[np.ndarray, list[Event]]:
         """Monstres épiques et bâtiments pris, dans l'ordre : (heures, événements)."""
