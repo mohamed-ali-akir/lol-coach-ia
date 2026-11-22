@@ -28,6 +28,12 @@ from lolcoach.db import (
 log = logging.getLogger(__name__)
 
 MAX_FRAMES = 400  # garde-fou : une partie de plus de 6 h n'existe pas
+# Types d'événements de Riot que ce fichier sait lire. Les autres (achats d'objets, niveaux,
+# pauses…) sont ignorés ; `lolcoach-collecte verifier` les liste.
+HANDLED_EVENT_TYPES = frozenset({
+    "CHAMPION_KILL", "ELITE_MONSTER_KILL", "BUILDING_KILL", "TURRET_PLATE_DESTROYED",
+    "WARD_PLACED", "WARD_KILL", "DRAGON_SOUL_GIVEN",
+})
 
 ParsedTimeline = tuple[list[dict[str, Any]], list[dict[str, Any]]]
 

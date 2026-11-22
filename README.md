@@ -39,6 +39,9 @@ La démo utilise des **parties simulées** : elle montre le fonctionnement, pas 
 ```bash
 cp .env.example .env                   # puis colle ta clé Riot dedans (developer.riotgames.com)
 
+# 0. Vérifier que tout fonctionne avec ta clé (une partie, rien n'est enregistré)
+lolcoach-collecte verifier "TonPseudo#EUW"
+
 # 1. Constituer la base de comparaison : des joueurs de ton rang et leurs parties
 lolcoach-collecte classement GOLD II
 lolcoach-collecte parties --joueurs 50 --par-joueur 20 --boule-de-neige
@@ -59,6 +62,8 @@ lolcoach-coach objectifs PUUID --creer cs_per_min
 Avec une clé de développement (100 requêtes toutes les 2 minutes, 2 requêtes par partie), on récupère environ **1 400 parties par heure**. La collecte s'interrompt sans perte (Ctrl+C), ne retélécharge jamais une partie connue, et retente toute seule à la collecte suivante une partie dont le téléchargement a échoué.
 
 **Si tu changes de type de clé Riot** (clé de développement → clé personnelle ou de production), les identifiants de joueurs déjà en file deviennent invalides : Riot les calcule par application. Les parties déjà collectées restent utilisables ; relance simplement `classement` et `joueur` pour reconstituer la file.
+
+`verifier` teste toute la chaîne (compte, rang, liste des parties, partie, timeline, analyse) et dit ce qui passe ou non. Il liste aussi les types d'événements que Riot envoie et que le projet ignore : c'est la première chose à relancer si un jour la collecte se met à échouer après un changement de l'API.
 
 Autres commandes de collecte : `completer` (timelines manquantes), `reimporter` (reconstruit la base depuis l'archive, sans contacter Riot), `parties --rafraichir-apres 24` (reprend les joueurs déjà vus).
 
@@ -100,6 +105,16 @@ Garde-fou : le modèle ne reçoit que le texte factuel, et sa réponse est rejet
 - **Le rang d'une partie est approximatif** : c'est celui du joueur par lequel elle a été trouvée.
 - L'API de Riot ne dit rien des sorts ratés, du placement en combat ni de l'état des vagues. Un coach humain qui regarde la vidéo voit plus.
 - Il faut **au moins quelques centaines de parties** de ton rang pour des repères fiables, et 5 de tes parties à un rôle pour un diagnostic (30 pour une fiabilité « bonne »).
+
+### Ce qui a été vérifié, et ce qui ne l'a pas encore été
+
+| | État |
+|---|---|
+| Collecte, analyse, modèles, coach, API | vérifiés par les tests, sur SQLite et MariaDB, avec des **parties simulées** |
+| Tolérance au format réel de Riot (champs et événements en plus, cas limites documentés) | vérifiée par `tests/test_format_reel.py`, sur des réponses **reconstruites d'après la documentation** |
+| Connexion au vrai serveur de Riot et lecture de ses refus | vérifiée (clé invalide → message clair, rien n'est enregistré) |
+| **Lecture de vraies parties avec une vraie clé** | **pas encore faite** : c'est le rôle de `lolcoach-collecte verifier` |
+| **Qualité des modèles sur de vraies parties** | **inconnue** : les chiffres de la démo viennent de parties simulées et ne disent rien du jeu réel. `lolcoach-entrainer` affiche les vraies mesures après une collecte |
 
 ## Sécurité et vie privée
 

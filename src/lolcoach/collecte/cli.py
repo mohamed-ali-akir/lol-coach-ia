@@ -1,6 +1,7 @@
 """Ligne de commande de collecte.
 
 Exemples :
+    lolcoach-collecte verifier "Pseudo#EUW"      # premier essai avec une vraie clé
     lolcoach-collecte joueur "Pseudo#EUW" --parties 30
     lolcoach-collecte classement GOLD II --pages 2
     lolcoach-collecte parties --joueurs 20 --par-joueur 20 --boule-de-neige
@@ -15,7 +16,7 @@ import logging
 import sys
 
 from lolcoach.archive import RawArchive
-from lolcoach.collecte import pipeline
+from lolcoach.collecte import pipeline, verification
 from lolcoach.config import ConfigError, load_config
 from lolcoach.db import init_db
 from lolcoach.riot import RiotClient, RiotError
@@ -37,6 +38,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lolcoach-collecte", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="commande", required=True)
+
+    p_verifier = sub.add_parser(
+        "verifier", help="tester toute la chaîne avec la vraie API Riot, sans rien enregistrer")
+    p_verifier.add_argument("riot_id", help='ex. "Pseudo#EUW"')
 
     p_joueur = sub.add_parser("joueur", help="mettre à jour un joueur : rang et dernières parties")
     p_joueur.add_argument("riot_id", help='ex. "Pseudo#EUW"')
@@ -78,6 +83,13 @@ def main(argv: list[str] | None = None) -> None:
 def _run(args: argparse.Namespace) -> None:
     offline = args.commande == "reimporter"
     config = load_config(require_key=not offline)
+    if args.commande == "verifier":
+        with RiotClient(config.riot_api_key, config.platform, config.region) as client:
+            check = verification.check_live(client, args.riot_id)
+        print(verification.render(check))
+        if not check.ok:
+            sys.exit(1)
+        return
     engine = init_db(config.database_url)
     archive = RawArchive(config.archive_dir) if config.archive_dir else None
 
