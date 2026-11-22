@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from lolcoach import opgg
 from lolcoach.analyse.deaths import clock
 from lolcoach.analyse.metrics import FAMILY_OF
 from lolcoach.analyse.report import MatchReport
@@ -109,4 +110,7 @@ def coaching_context(coach: Coach, puuid: str, match_id: str | None = None) -> d
     cards, _ = load_cards()
     themes = {BY_CODE[e["code"]].theme for e in errors if e["code"] in BY_CODE}
     context["fiches"] = [c.as_dict() for c in pick_cards(cards, report, themes)]
+    # Build du patch en cours (OP.GG) : il prime sur les builds écrits dans les fiches.
+    build, reason = opgg.champion_build(report.champion, report.role)
+    context["build_opgg"] = build if build is not None else {"indisponible": reason}
     return context

@@ -94,6 +94,8 @@ lolcoach-fiches video <lien YouTube> --role JUNGLE   # fiches de connaissances �
 | `lolcoach-auto` | surveille le client LoL ; à chaque fin de partie : collecte, erreurs, captures du replay, analyse par une IA de vision, rapport rédigé |
 | `lolcoach-fiches` | transforme une vidéo éducative en fiches (API Gemini ou appli Gemini), que tu relis et valides |
 
+**Build du patch en cours** : `lolcoach-coach build Belveth --role JUNGLE` affiche le build d'op.gg (objets, runes, sorts, ordre des compétences, avec leurs taux de victoire), et chaque rapport rédigé par une IA le reçoit : il prime sur les builds des fiches. Seuls le champion et le rôle sont envoyés à op.gg (serveur public prévu pour les applis), réponse gardée 24 h dans `donnees/cache/opgg` ; `LOLCOACH_OPGG=0` coupe l'appel.
+
 Les IA possibles : API Gemini (`gemini-4-argon`), Gemini par Google Antigravity (`agy -p`), Claude Code (`claude -p`, abonnement), API Claude, ou toute autre commande. Ce qu'elles renvoient est validé : seuls les codes du catalogue d'erreurs sont acceptés, et un rapport qui cite des nombres absents des données porte la mention « À vérifier ».
 
 ## Dans LoL Companion

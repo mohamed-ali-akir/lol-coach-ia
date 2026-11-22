@@ -15,6 +15,7 @@ Exemples (le puuid est affiché par « lolcoach-collecte joueur ») :
     lolcoach-coach erreurs PUUID --contester 12  # « ce n'était pas une erreur »
     lolcoach-coach note PUUID "j'ai gank top car Renekton à 2 PV" --partie EUW1_… --minute 8:10
     lolcoach-coach catalogue                     # les erreurs suivies et leurs codes
+    lolcoach-coach build Belveth --role JUNGLE   # build du patch en cours d'après op.gg
 
 --ia ajoute « le mot du coach », écrit par le modèle de langage choisi dans LOLCOACH_LLM.
 """
@@ -27,6 +28,7 @@ from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 
+from lolcoach import opgg
 from lolcoach.analyse.deaths import clock
 from lolcoach.analyse.diagnostic import DiagnosticError
 from lolcoach.analyse.metrics import METRICS, ROLE_LABELS, ROLES
@@ -107,6 +109,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_note.add_argument("--minute", help="ex. 14:20")
 
     sub.add_parser("catalogue", help="les erreurs suivies et leurs codes")
+
+    p_build = sub.add_parser("build", help="build du patch en cours d'après op.gg")
+    p_build.add_argument("champion", help="ex. Belveth, MonkeyKing, \"Lee Sin\"")
+    p_build.add_argument("--role", choices=ROLES, type=str.upper, required=True)
     return parser
 
 
@@ -169,6 +175,12 @@ def _run(args: argparse.Namespace) -> None:
     load_dotenv()
     if args.commande == "catalogue":
         _print_catalogue()
+        return
+    if args.commande == "build":
+        build, reason = opgg.champion_build(args.champion, args.role)
+        if build is None:
+            raise ValueError(f"build indisponible : {reason}")
+        print("\n".join(opgg.render_build(args.champion, args.role, build)))
         return
     validate_puuid(args.puuid)
     coach = Coach(init_db(database_url()), models_dir(),

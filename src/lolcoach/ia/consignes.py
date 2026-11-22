@@ -12,7 +12,7 @@ from typing import Any
 from lolcoach.client_lol.replay import Moment
 from lolcoach.suivi.catalogue import AI, CATALOGUE
 
-PROMPT_VERSION = "2026-11-1"
+PROMPT_VERSION = "2026-11-2"
 
 _ERROR_ITEM = {
     "type": "object",
@@ -122,6 +122,10 @@ Règles :
 - utilise la progression : signale une erreur qui revient (« troisième partie sur cinq… »)
   et félicite une erreur corrigée ou en progrès ;
 - tiens compte des notes du joueur (son contexte) et appuie-toi sur les fiches validées ;
+- objets, runes, sorts et ordre des compétences : suis « build_opgg » (statistiques d'op.gg
+  pour le patch en cours, avec son taux de victoire) ; il prime sur les builds des fiches,
+  qui peuvent dater d'un ancien patch. S'il est indisponible, dis que le build d'une fiche
+  est à vérifier ;
 - termine par un point positif sincère et l'objectif de la prochaine partie ;
 - pas plus de 450 mots, titres courts, pas de tableau.
 

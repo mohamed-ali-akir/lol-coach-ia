@@ -146,6 +146,12 @@ class EngineFactory:
                     conn.exec_driver_sql(f"DROP DATABASE IF EXISTS {database}")
 
 
+@pytest.fixture(autouse=True)
+def _no_opgg(monkeypatch):
+    """Aucun test n'appelle le vrai OP.GG (tests/test_opgg.py simule ses réponses)."""
+    monkeypatch.setenv("LOLCOACH_OPGG", "0")
+
+
 @pytest.fixture
 def new_engine(tmp_path):
     """Fabrique de bases de test : `new_engine()` rend une base vide et migrée."""

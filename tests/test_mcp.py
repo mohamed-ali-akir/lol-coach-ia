@@ -31,7 +31,9 @@ def test_report_tool_returns_text_facts_and_errors(tools):
     progress = tools.progression_erreurs()
     assert progress["parties_analysees"] >= 1
     context = tools.contexte_coaching()
-    assert {"faits", "erreurs_reperees", "progression", "fiches", "catalogue"} <= set(context)
+    assert {"faits", "erreurs_reperees", "progression", "fiches", "catalogue",
+            "build_opgg"} <= set(context)
+    assert context["build_opgg"] == {"indisponible": "OP.GG désactivé (LOLCOACH_OPGG=0)"}
     json.dumps(context)
 
 
