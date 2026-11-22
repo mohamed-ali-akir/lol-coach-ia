@@ -27,6 +27,13 @@ lolcoach-fiches lister --statut a_valider   # relire…
 lolcoach-fiches valider jgl-setup-drake     # …et valider
 ```
 
+### Fiches privées
+
+Ce dépôt est public. Les fiches tirées d'une formation payante ou privée vont dans
+`connaissances/prive/` (mêmes sous-dossiers par rôle) : le coach les lit comme les autres, mais
+Git les ignore, elles ne partent jamais sur GitHub. N'y mets que des fiches rédigées avec tes
+mots, jamais les transcriptions ni les vidéos elles-mêmes.
+
 ### Depuis une session Claude du cloud : le relais du PC
 
 Une session du cloud n'a ni `agy` ni ton compte Google : elle confie la vidéo à ton PC par

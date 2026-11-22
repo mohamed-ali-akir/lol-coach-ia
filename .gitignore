@@ -19,3 +19,6 @@ demo/
 *.db
 *.db-wal
 *.db-shm
+
+# Fiches tirées de formations payantes ou privées : lues par le coach, jamais publiées
+connaissances/prive/
