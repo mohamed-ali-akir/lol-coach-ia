@@ -28,6 +28,7 @@ from lolcoach.analyse.references import ChampionReferences, Comparison, compare
 from lolcoach.modele.winprob import WinProbModel
 
 MAX_MOMENTS = 3
+FIRST_DEATHS = 3  # morts regardées dans le replay, dans l'ordre de la partie
 MIN_MOMENT_COST = 0.01  # en dessous d'un point, une mort n'est pas un « moment clé »
 STRENGTH_PERCENTILE = 65.0
 WEAKNESS_PERCENTILE = 35.0
@@ -108,6 +109,7 @@ class MatchReport:
     story: str | None = None  # « throw », « comeback » ou None
     deaths_cost_points: float = 0.0  # total des points perdus sur ses morts
     moments: list[Moment] = field(default_factory=list)
+    first_deaths: list[Moment] = field(default_factory=list)  # ses 3 premières morts (replay)
     strengths: list[StatLine] = field(default_factory=list)
     weaknesses: list[StatLine] = field(default_factory=list)
     jungle: JungleFacts | None = None
@@ -217,7 +219,12 @@ def report_for(match: MatchData, puuid: str, benchmarks: Benchmarks | None,
     if report.role == "JUNGLE" and match.has_timeline:
         report.jungle = _jungle_facts(match, pid, report.comparison)
 
-    if not match.has_timeline or winprob is None:
+    if not match.has_timeline:
+        return report
+    if winprob is None:  # sans modèle : pas de coût, mais les premières morts restent connues
+        report.first_deaths = [_moment(d, report.role) for d in
+                               sorted(classify_deaths(match, pid), key=lambda d: d.ts)
+                               [:FIRST_DEATHS]]
         return report
     curve = winprob.curve(match)
     own = curve if match.team(pid) == 100 else 1.0 - curve
@@ -236,6 +243,8 @@ def report_for(match: MatchData, puuid: str, benchmarks: Benchmarks | None,
     costly = sorted((d for d in deaths if (d.cost or 0.0) >= MIN_MOMENT_COST),
                     key=lambda d: -(d.cost or 0.0))[:MAX_MOMENTS]
     report.moments = [_moment(d, report.role) for d in sorted(costly, key=lambda d: d.ts)]
+    report.first_deaths = [_moment(d, report.role)
+                           for d in sorted(deaths, key=lambda d: d.ts)[:FIRST_DEATHS]]
     return report
 
 

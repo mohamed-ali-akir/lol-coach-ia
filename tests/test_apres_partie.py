@@ -27,7 +27,8 @@ class FakeVision:
 
     def look(self, prompt, images, schema):
         self.calls.append((prompt, list(images)))
-        return {"moments": [{"resume": "gank sans prio", "erreurs": [
+        return {"moments": [{"resume": "gank sans prio", "cause": "jungler adverse caché",
+                             "solution": "reculer après sa vague", "erreurs": [
             {"code": "JGL_GANK_SANS_PRIO", "confiance": 0.8, "preuve": "vague adverse"},
             {"code": "INVENTE", "confiance": 0.9}]}],
             "propositions": [{"nom": "Smite trop tôt", "description": "…"}]}
@@ -35,9 +36,11 @@ class FakeVision:
 
 class FakeWriter:
     name = "claude-code"
+    prompts: list[str] = []
 
     def write(self, prompt):
         assert "Données" in prompt
+        FakeWriter.prompts.append(prompt)
         return "Rapport du coach. À 99:99 tu as perdu 4242 points."
 
 
@@ -68,6 +71,38 @@ def test_after_game_with_replay_vision_and_writer(coach, tmp_path, monkeypatch):
     codes = {e["code"] for e in store.match_errors(coach.engine, DEMO_PUUID, match_id)}
     assert "JGL_GANK_SANS_PRIO" in codes
     assert len(vision.calls[0][1]) == 5
+    # Cause et solution vues dans le replay arrivent jusqu'au rédacteur.
+    assert "reculer après sa vague" in FakeWriter.prompts[-1]
+    assert "analyse_video" in FakeWriter.prompts[-1]
+
+
+def test_first_deaths_come_first_in_replay_moments(coach):
+    match_id = next(m["match_id"] for m in coach.matches(DEMO_PUUID, 30) if m["deaths"] >= 3)
+    report = coach.report(DEMO_PUUID, match_id).report
+    assert len(report.first_deaths) == 3
+    assert [d.ts for d in report.first_deaths] == sorted(d.ts for d in report.first_deaths)
+    moments = apres_partie.key_moments(report, [])
+    first = report.first_deaths[0]
+    assert any(abs(m.ts_ms - first.ts) < 30_000 and "1e mort" in m.reason for m in moments)
+
+
+def test_one_failed_vision_moment_keeps_the_others(tmp_path):
+    from lolcoach.ia.fournisseurs import AIError
+
+    class HalfBroken(FakeVision):
+        def look(self, prompt, images, schema):
+            if len(self.calls) == 0:
+                self.calls.append(prompt)
+                raise AIError("quota")
+            return super().look(prompt, images, schema)
+
+    frame = tmp_path / "a.png"
+    frame.write_bytes(b"png")
+    captures = [Capture(Moment(60_000, "1e mort"), tmp_path, [frame]),
+                Capture(Moment(300_000, "2e mort"), tmp_path, [frame])]
+    payload = apres_partie.look_at_captures(HalfBroken(), captures, "Belveth", "JUNGLE", {})
+    assert len(payload["moments"]) == 1 and "quota" in payload["echecs"][0]
+    assert apres_partie.video_findings(payload)[0]["solution"] == "reculer après sa vague"
 
 
 def test_after_game_without_ai_keeps_factual_report(coach, tmp_path):

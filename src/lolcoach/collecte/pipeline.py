@@ -264,7 +264,10 @@ def sync_player(
     riot_id: str,
     count: int = 20,
 ) -> tuple[str, CollectStats]:
-    """Met à jour un joueur précis : son rang et ses `count` dernières parties classées."""
+    """Met à jour un joueur précis : son rang et ses `count` dernières parties, toutes files
+    de la Faille confondues (classée, Flex, normales, Swiftplay) : le coach analyse aussi tes
+    normales. Les parties sans rôle (ARAM, Arena) sont écartées à la lecture, et seules les
+    classées solo servent à entraîner les modèles (`analyse.data.all_match_ids`)."""
     game_name, tag_line = parse_riot_id(riot_id)
     puuid = client.account_by_riot_id(game_name, tag_line).get("puuid")
     if not isinstance(puuid, str) or not puuid:
@@ -274,7 +277,7 @@ def sync_player(
         db.set_player_rank(conn, puuid, tier, division)
 
     stats = CollectStats(players=1)
-    match_ids = client.match_ids(puuid, count=count)
+    match_ids = client.match_ids(puuid, queue=None, count=count)
     _collect_ids(client, engine, archive, match_ids, tier, stats)
     with engine.begin() as conn:
         db.mark_player_fetched(conn, puuid)

@@ -31,8 +31,9 @@ class FakeRiot:
     def account_by_riot_id(self, game_name, tag_line):
         return {"puuid": "p1", "gameName": game_name, "tagLine": tag_line}
 
-    def match_ids(self, puuid, count=20, start_time=None):
-        self.id_calls.append({"puuid": puuid, "count": count, "start_time": start_time})
+    def match_ids(self, puuid, count=20, start_time=None, queue=420):
+        self.id_calls.append({"puuid": puuid, "count": count, "start_time": start_time,
+                              "queue": queue})
         return self.matches_by_player.get(puuid, [])[:count]
 
     def match(self, match_id):
@@ -128,6 +129,7 @@ def test_sync_player_fetches_rank_and_matches(engine):
     puuid, stats = pipeline.sync_player(riot, engine, None, "Mon Pseudo#EUW", count=2)
 
     assert puuid == "p1" and stats.saved == 2
+    assert riot.id_calls[0]["queue"] is None  # ses normales aussi, pas seulement la classée
     with engine.connect() as conn:
         player = db.get_player(conn, "p1")
     assert (player["tier"], player["division"]) == ("PLATINUM", "III")

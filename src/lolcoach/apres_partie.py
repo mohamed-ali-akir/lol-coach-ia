@@ -91,10 +91,16 @@ def wait_for_match(client: RiotClient, match_id: str, timeout_s: float = MATCH_W
 
 
 def key_moments(report: MatchReport, errors: list[dict[str, Any]]) -> list[Moment]:
-    """Moments à capturer, du plus important au moins important : morts les plus coûteuses,
-    objectifs manqués, puis autres erreurs datées."""
-    moments = [Moment(m.ts, f"mort ({m.label}, {m.cost_points:.0f} points de proba perdus)")
-               for m in sorted(report.moments, key=lambda m: -m.cost_points)]
+    """Moments à capturer, du plus important au moins important : ses 3 premières morts
+    (analysées une par une, avec la solution), les morts les plus coûteuses, les objectifs
+    manqués, puis les autres erreurs datées."""
+    moments = [Moment(m.ts, f"{rank}e mort de la partie ({m.label}, {m.enemies} adversaire(s), "
+                            f"{m.allies_nearby if m.allies_nearby is not None else '?'} "
+                            "allié(s) à portée) : explique pourquoi il meurt et ce qu'il "
+                            "fallait faire")
+               for rank, m in enumerate(report.first_deaths, start=1)]
+    moments += [Moment(m.ts, f"mort ({m.label}, {m.cost_points:.0f} points de proba perdus)")
+                for m in sorted(report.moments, key=lambda m: -m.cost_points)]
     if report.jungle is not None:
         for missed in report.jungle.missed:
             minutes, seconds = missed.clock.split(":")
@@ -136,8 +142,12 @@ def look_at_captures(vision: VisionProvider, captures: list[Capture], champion: 
     for capture in captures:
         if not capture.frames:
             continue
-        answer = vision.look(vision_prompt(capture.moment, champion, role, facts),
-                             thin_frames(capture.frames, FRAMES_PER_MOMENT), VISION_SCHEMA)
+        try:
+            answer = vision.look(vision_prompt(capture.moment, champion, role, facts),
+                                 thin_frames(capture.frames, FRAMES_PER_MOMENT), VISION_SCHEMA)
+        except AIError as exc:  # un moment raté ne fait pas perdre les autres
+            payload.setdefault("echecs", []).append(f"{capture.moment.reason[:60]} : {exc}")
+            continue
         clock = f"{capture.moment.ts_ms // 60_000}:{capture.moment.ts_ms // 1000 % 60:02d}"
         for moment in answer.get("moments") or []:
             if isinstance(moment, dict):
@@ -146,6 +156,16 @@ def look_at_captures(vision: VisionProvider, captures: list[Capture], champion: 
         payload["propositions"] += [p for p in answer.get("propositions") or []
                                     if isinstance(p, dict)]
     return payload
+
+
+def video_findings(payload: dict[str, Any]) -> list[dict[str, str]]:
+    """Ce que l'IA a vu à chaque moment du replay (cause, solution), pour le rédacteur."""
+    findings = []
+    for moment in payload.get("moments") or []:
+        if isinstance(moment, dict):
+            findings.append({key: str(moment.get(key) or "")[:400]
+                             for key in ("minute", "resume", "cause", "solution")})
+    return findings
 
 
 def write_report(writer: TextProvider, context: dict[str, Any]) -> tuple[str, list[str]]:
@@ -185,7 +205,9 @@ def after_game(coach: Coach, puuid: str, match_id: str, options: Options,
                                                      vision.name, payload)
                 result.vision_errors = record.errors
                 result.warnings += [f"analyse vidéo : {r}" for r in record.ignored[:5]]
+                result.warnings += [f"analyse vidéo : {e}" for e in payload.get("echecs", [])]
                 context = coaching_context(coach, puuid, match_id)
+                context["analyse_video"] = video_findings(payload)
             elif vision is None:
                 result.warnings.append("captures faites, mais aucune IA de vision configurée "
                                        "(LOLCOACH_VISION)")

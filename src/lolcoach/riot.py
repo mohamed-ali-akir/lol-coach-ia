@@ -306,17 +306,20 @@ class RiotClient:
     def match_ids(
         self,
         puuid: str,
-        queue: int = RANKED_SOLO_QUEUE_ID,
+        queue: int | None = RANKED_SOLO_QUEUE_ID,
         start: int = 0,
         count: int = 100,
         start_time: int | None = None,
     ) -> list[str]:
         """Identifiants des parties, de la plus récente à la plus ancienne.
 
+        `queue=None` : toutes les files (classée, Flex, normales, Swiftplay…).
         `start_time` (secondes depuis 1970) : ne renvoie que les parties plus récentes.
         """
         path = f"/lol/match/v5/matches/by-puuid/{validate_puuid(puuid)}/ids"
-        params: dict[str, Any] = {"queue": queue, "start": start, "count": min(count, 100)}
+        params: dict[str, Any] = {"start": start, "count": min(count, 100)}
+        if queue is not None:
+            params["queue"] = queue
         if start_time is not None:
             params["startTime"] = start_time
         ids = self._get_list("match.ids", self._region_url + path, params)

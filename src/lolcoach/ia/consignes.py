@@ -12,7 +12,7 @@ from typing import Any
 from lolcoach.client_lol.replay import Moment
 from lolcoach.suivi.catalogue import AI, CATALOGUE
 
-PROMPT_VERSION = "2026-11-2"
+PROMPT_VERSION = "2026-11-3"
 
 _ERROR_ITEM = {
     "type": "object",
@@ -36,6 +36,10 @@ VISION_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "minute": {"type": "string"},
                     "resume": {"type": "string", "description": "ce qui se passe, en une phrase"},
+                    "cause": {"type": "string", "description":
+                              "pour une mort : pourquoi il meurt, d'après les images"},
+                    "solution": {"type": "string",
+                                 "description": "ce qu'il fallait faire à la place, concrètement"},
                     "erreurs": {"type": "array", "items": _ERROR_ITEM},
                 },
                 "required": ["minute", "resume", "erreurs"],
@@ -95,8 +99,11 @@ Faits établis par les données de la partie (fiables, ne les contredis pas) :
 {json.dumps(facts, ensure_ascii=False, indent=1)}
 
 Regarde la mini-carte, la vie et les sorts des champions, les vagues de sbires et les balises.
-Décris le moment en une phrase, puis relève les erreurs du joueur que les images MONTRENT,
-uniquement avec ces codes :
+Décris le moment en une phrase. Si c'est une mort du joueur, remplis « cause » (pourquoi il
+meurt : position, vision, adversaires absents de la carte, sorts utilisés, vie…) et
+« solution » (ce qu'il fallait faire à la place, en une ou deux actions concrètes : reculer à
+tel moment, poser une balise ici, attendre tel sort…). Relève ensuite les erreurs du joueur
+que les images MONTRENT, uniquement avec ces codes :
 {_ai_catalogue(role)}
 
 Règles :
@@ -122,6 +129,9 @@ Règles :
 - utilise la progression : signale une erreur qui revient (« troisième partie sur cinq… »)
   et félicite une erreur corrigée ou en progrès ;
 - tiens compte des notes du joueur (son contexte) et appuie-toi sur les fiches validées ;
+- si « analyse_video » est présent (replay regardé par une IA), consacre une partie à ses
+  premières morts, dans l'ordre : pour chacune, la minute, la cause vue dans le replay et la
+  solution ; garde ses mots quand ils sont précis ;
 - objets, runes, sorts et ordre des compétences : suis « build_opgg » (statistiques d'op.gg
   pour le patch en cours, avec son taux de victoire) ; il prime sur les builds des fiches,
   qui peuvent dater d'un ancien patch. S'il est indisponible, dis que le build d'une fiche

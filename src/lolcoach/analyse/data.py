@@ -14,6 +14,7 @@ import numpy as np
 from sqlalchemy import Connection, Engine, case, func, select
 
 from lolcoach import db
+from lolcoach.riot import RANKED_SOLO_QUEUE_ID
 
 CHUNK = 200  # parties chargées par requête : borne la mémoire et la taille des requêtes
 
@@ -201,9 +202,12 @@ def recent_match_ids(conn: Connection, puuid: str, limit: int) -> list[str]:
 
 def all_match_ids(conn: Connection, patch: str | None = None, timeline_only: bool = True
                   ) -> list[str]:
-    """Toutes les parties exploitables, de la plus ancienne à la plus récente."""
-    query = select(db.matches.c.match_id).order_by(db.matches.c.game_creation,
-                                                   db.matches.c.match_id)
+    """Toutes les parties classées solo exploitables, de la plus ancienne à la plus récente.
+    Elles servent à entraîner les modèles et à calculer les repères : les normales du joueur,
+    collectées pour ses rapports, n'y entrent pas."""
+    query = (select(db.matches.c.match_id)
+             .where(db.matches.c.queue_id == RANKED_SOLO_QUEUE_ID)
+             .order_by(db.matches.c.game_creation, db.matches.c.match_id))
     if timeline_only:
         query = query.where(db.matches.c.has_timeline.is_(True))
     if patch:

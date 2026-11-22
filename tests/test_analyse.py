@@ -52,6 +52,16 @@ def test_legacy_matches_without_participant_ids_are_skipped(engine):
         assert all_match_ids(conn) == [] and all_match_ids(conn, timeline_only=False) == ["EUW1_1"]
 
 
+def test_only_ranked_solo_games_train_the_models(engine):
+    """Les normales du joueur sont collectées pour ses rapports, pas pour l'entraînement."""
+    with engine.begin() as conn:
+        for match_id, queue in (("EUW1_1", 420), ("EUW1_2", 400), ("EUW1_3", 440)):
+            dto = make_match(match_id)
+            dto["info"]["queueId"] = queue
+            db.save_match(conn, *parse_match(dto))
+        assert all_match_ids(conn, timeline_only=False) == ["EUW1_1"]
+
+
 def test_matches_are_loaded_in_requested_order_across_chunks(demo):
     with demo.engine.connect() as conn:
         ids = all_match_ids(conn)
