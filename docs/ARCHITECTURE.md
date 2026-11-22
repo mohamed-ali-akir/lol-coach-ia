@@ -95,6 +95,8 @@ Priorité = retard du joueur × poids. Le diagnostic garde au plus une priorité
 
 Un retard ne compte que s'il est **net et peu explicable par le hasard** : rang moyen de 40 au plus, et inférieur à 50 avec 95 % de confiance compte tenu du nombre de parties. Sans cette marge, 74 % de joueurs tirés au hasard dans la population recevaient 3 « priorités » ; avec elle, 85 % n'en reçoivent aucune, et un vrai point faible reste détecté (testé).
 
+Une statistique ne fait une priorité que si elle décrit un trait **stable** du joueur (`analyse/stability.py`) : à chaque entraînement, les parties de chaque joueur suivi sont coupées en deux moitiés et l'on vérifie que les deux moitiés classent les joueurs dans le même ordre. Une statistique sous le seuil du hasard reste affichée dans les rapports de partie mais n'est jamais une priorité. La mesure est enregistrée avec les repères, et suit donc les données plutôt qu'une décision figée (résultats sur de vraies parties : [QUALITE.md](QUALITE.md)).
+
 La moyenne du joueur est comparée à la **moyenne** des joueurs comparables, pas à leur médiane : pour une statistique qui vaut souvent 0 (morts isolées), la médiane vaut 0 et ferait paraître tout le monde en retard. Un rang n'est utilisé comme repère que s'il couvre les victoires et les défaites ; sinon tout est comparé à « tous rangs », et le texte le dit.
 
 ### Probabilité de victoire
