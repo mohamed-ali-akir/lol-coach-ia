@@ -125,3 +125,29 @@ def test_path_matrix():
     assert matrix.shape == (8, 2)
     assert matrix[0, 0] == 1000
     assert np.isnan(matrix[6, 0])  # la partie s'arrête à 5 min
+
+
+def test_jungle_section_in_report(engine, monkeypatch):
+    from lolcoach.analyse import references as refs
+    from lolcoach.analyse.data import all_match_ids, iter_matches
+    from lolcoach.analyse.report import report_for
+    from lolcoach.coach.redaction import render_report
+
+    for i in range(1, 13):
+        match_dto, timeline = simulated(f"SIM1_{i}", seed=i)
+        pipeline.store_match(engine, match_dto, timeline, "CHALLENGER")
+    monkeypatch.setattr(refs, "MIN_GAMES", 1)
+    with engine.connect() as conn:
+        matches = list(iter_matches(engine, all_match_ids(conn)))
+    references = refs.build_references(matches)
+    match = matches[0]
+    jungler = next(p for p, row in match.players.items() if row["position"] == "JUNGLE")
+    report = report_for(match, match.players[jungler]["puuid"], None, None, references)
+    assert report.jungle is not None and report.comparison is not None
+    assert report.jungle.first_clear_ref is not None
+    text = render_report(report)
+    assert "Ta jungle" in text and "Premier clear" in text
+    assert "meilleurs joueurs sur" in text
+    laner = next(p for p, row in match.players.items() if row["position"] == "MIDDLE")
+    lane_report = report_for(match, match.players[laner]["puuid"], None, None, references)
+    assert lane_report.jungle is None and "Ta jungle" not in render_report(lane_report)

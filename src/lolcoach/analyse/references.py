@@ -237,6 +237,15 @@ class Comparison:
     # Junglers : minute -> (zone du joueur, zone la plus fréquente chez les meilleurs, part)
     zones: dict[int, tuple[str, str, float]]
     metrics: dict[str, tuple[float, float]]  # statistique -> (valeur du joueur, médiane)
+    series_ref: dict[str, list[list[float] | None]] = field(default_factory=dict, repr=False)
+
+    def median(self, series: str, minute: int) -> float | None:
+        """Médiane de référence d'une série à une minute pleine (1 à MINUTES)."""
+        rows = self.series_ref.get(series)
+        if not rows or not 1 <= minute <= len(rows) or rows[minute - 1] is None:
+            return None
+        row = rows[minute - 1]
+        return None if row is None else row[1]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -292,4 +301,5 @@ def compare(references: ChampionReferences, match: MatchData, pid: int
     values = compute_game(match, pid).values
     metrics = {k: (float(v), ref["metrics"][k]) for k, v in values.items()
                if v is not None and np.isfinite(v) and k in ref["metrics"]}
-    return Comparison(champion, role, ref["n"], references.tiers, gaps, zones, metrics)
+    return Comparison(champion, role, ref["n"], references.tiers, gaps, zones, metrics,
+                      ref["series"])

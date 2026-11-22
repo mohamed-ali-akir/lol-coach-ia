@@ -155,7 +155,8 @@ def test_internal_errors_do_not_leak_details(demo):
 
 def test_status_player_and_matches(client):
     status = client.get("/status", headers=AUTH).json()
-    assert status == {"api_version": "1", "models": {"reperes": True, "victoire": True},
+    assert status == {"api_version": "1", "models": {"reperes": True, "victoire": True,
+                                                         "references": False},
                       "llm": None, "riot_sync": False}
 
     player = client.get(f"/players/{DEMO_PUUID}", headers=AUTH).json()

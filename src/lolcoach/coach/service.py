@@ -21,12 +21,13 @@ from lolcoach.analyse.data import player_fingerprint, recent_match_ids
 from lolcoach.analyse.deaths import clock
 from lolcoach.analyse.diagnostic import Diagnostic, DiagnosticError, build_diagnostic
 from lolcoach.analyse.metrics import METRICS_BY_KEY
+from lolcoach.analyse.references import ChampionReferences
 from lolcoach.analyse.report import MatchReport, ReportError, build_report
 from lolcoach.coach import goals as goals_module
 from lolcoach.coach.goals import GoalError, GoalProgress, Proposal
 from lolcoach.coach.llm import Provider, rewrite
 from lolcoach.coach.redaction import render_diagnostic, render_report
-from lolcoach.modele.cli import BENCHMARKS_FILE, WINPROB_FILE
+from lolcoach.modele.cli import BENCHMARKS_FILE, REFERENCES_FILE, WINPROB_FILE
 from lolcoach.modele.logistic import ArtifactError
 from lolcoach.modele.winprob import WinProbModel
 
@@ -90,6 +91,7 @@ class Coach:
         folder = Path(models_dir)
         self._benchmarks = _Cached(folder / BENCHMARKS_FILE, Benchmarks.load)
         self._winprob = _Cached(folder / WINPROB_FILE, WinProbModel.load)
+        self._references = _Cached(folder / REFERENCES_FILE, ChampionReferences.load)
         self._diagnostics: OrderedDict[tuple[Any, ...], Diagnostic] = OrderedDict()
         self._diagnostics_lock = threading.Lock()
 
@@ -102,8 +104,13 @@ class Coach:
         """Facultatif : sans lui, les rapports n'ont pas de moments clés chiffrés."""
         return self._winprob.get() if self._winprob.available() else None
 
+    def references(self) -> ChampionReferences | None:
+        """Facultatif : sans elles, pas de comparaison aux meilleurs joueurs du champion."""
+        return self._references.get() if self._references.available() else None
+
     def models_status(self) -> dict[str, bool]:
-        return {"reperes": self._benchmarks.available(), "victoire": self._winprob.available()}
+        return {"reperes": self._benchmarks.available(), "victoire": self._winprob.available(),
+                "references": self._references.available()}
 
     def _finish(self, text: str, use_llm: bool) -> tuple[str, bool, str | None, str | None]:
         """(texte, mot du coach ajouté ?, raison de son absence, mot du coach seul)."""
@@ -202,7 +209,8 @@ class Coach:
                 raise ReportError("Aucune partie exploitable pour ce joueur.")
             match_id = latest[0]
         benchmarks = self.benchmarks() if self._benchmarks.available() else None
-        report = build_report(self.engine, puuid, match_id, benchmarks, self.winprob())
+        report = build_report(self.engine, puuid, match_id, benchmarks, self.winprob(),
+                              self.references())
 
         focus = None
         if benchmarks is not None:

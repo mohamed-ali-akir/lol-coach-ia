@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 import numpy as np
 from sqlalchemy import Engine
 
+from lolcoach.analyse import jungle as jungle_module
 from lolcoach.analyse.benchmarks import Benchmarks
 from lolcoach.analyse.data import MatchData, load_match
 from lolcoach.analyse.deaths import (
@@ -23,6 +24,7 @@ from lolcoach.analyse.deaths import (
     death_costs,
 )
 from lolcoach.analyse.metrics import METRICS_BY_KEY, compute_game
+from lolcoach.analyse.references import ChampionReferences, Comparison, compare
 from lolcoach.modele.winprob import WinProbModel
 
 MAX_MOMENTS = 3
@@ -63,6 +65,30 @@ class StatLine:
 
 
 @dataclass
+class MissedObjective:
+    clock: str
+    label: str  # « dragon », « Baron Nashor »…
+    distance: float | None  # distance à l'objectif 30 s avant sa prise
+
+
+@dataclass
+class JungleFacts:
+    """Le jungle d'une partie, comparé (si possible) à la référence du champion."""
+
+    start_side: str | None
+    first_clear: float | None  # monstres tués à 3:30
+    first_clear_ref: float | None  # médiane des meilleurs joueurs sur ce champion
+    jungle_cs_10: float | None
+    jungle_cs_10_ref: float | None
+    enemy_jungle_pct: float | None
+    early_kills: float | None
+    lane_visits: dict[str, int]
+    objectives_total: int
+    objectives_present: int
+    missed: list[MissedObjective]  # pris par l'adversaire, joueur vivant mais loin
+
+
+@dataclass
 class MatchReport:
     match_id: str
     puuid: str
@@ -84,6 +110,8 @@ class MatchReport:
     moments: list[Moment] = field(default_factory=list)
     strengths: list[StatLine] = field(default_factory=list)
     weaknesses: list[StatLine] = field(default_factory=list)
+    jungle: JungleFacts | None = None
+    comparison: Comparison | None = None  # face à la référence du champion (MASTER et plus)
 
 
 def _moment(death: Death) -> Moment:
@@ -133,8 +161,38 @@ def _stat_lines(match: MatchData, pid: int, benchmarks: Benchmarks | None
     return strengths, weaknesses
 
 
+def _ref_median(comparison: Comparison | None, series: str, minute: int) -> float | None:
+    return None if comparison is None else comparison.median(series, minute)
+
+
+def _jungle_facts(match: MatchData, pid: int, comparison: Comparison | None) -> JungleFacts:
+    summary = jungle_module.summarize(match, pid)
+    first_clear_ref = None
+    if comparison is not None:
+        # La référence est par minute pleine : moyenne de 3 et 4 min pour 3:30.
+        at3, at4 = (_ref_median(comparison, "jungle_cs", m) for m in (3, 4))
+        if at3 is not None and at4 is not None:
+            first_clear_ref = (at3 + at4) / 2
+    missed = [MissedObjective(clock(c.ts), c.label, c.distance) for c in summary.objectives
+              if not c.taken_by_team and not c.present and c.alive]
+    return JungleFacts(
+        start_side=summary.start_side,
+        first_clear=summary.jungle_cs_first_clear,
+        first_clear_ref=first_clear_ref,
+        jungle_cs_10=summary.jungle_cs_10,
+        jungle_cs_10_ref=_ref_median(comparison, "jungle_cs", 10),
+        enemy_jungle_pct=summary.enemy_jungle_pct,
+        early_kills=summary.early_kills,
+        lane_visits=summary.lane_visits,
+        objectives_total=len(summary.objectives),
+        objectives_present=sum(c.present for c in summary.objectives),
+        missed=missed,
+    )
+
+
 def report_for(match: MatchData, puuid: str, benchmarks: Benchmarks | None,
-               winprob: WinProbModel | None) -> MatchReport:
+               winprob: WinProbModel | None,
+               references: ChampionReferences | None = None) -> MatchReport:
     """Établit le rapport d'une partie déjà chargée."""
     pid = match.pid_of(puuid)
     if pid is None:
@@ -154,6 +212,10 @@ def report_for(match: MatchData, puuid: str, benchmarks: Benchmarks | None,
         has_timeline=match.has_timeline,
     )
     report.strengths, report.weaknesses = _stat_lines(match, pid, benchmarks)
+    if references is not None and match.has_timeline:
+        report.comparison = compare(references, match, pid)
+    if report.role == "JUNGLE" and match.has_timeline:
+        report.jungle = _jungle_facts(match, pid, report.comparison)
 
     if not match.has_timeline or winprob is None:
         return report
@@ -178,8 +240,9 @@ def report_for(match: MatchData, puuid: str, benchmarks: Benchmarks | None,
 
 
 def build_report(engine: Engine, puuid: str, match_id: str, benchmarks: Benchmarks | None,
-                 winprob: WinProbModel | None) -> MatchReport:
+                 winprob: WinProbModel | None,
+                 references: ChampionReferences | None = None) -> MatchReport:
     match = load_match(engine, match_id)
     if match is None:
         raise ReportError(f"Partie {match_id} introuvable dans la base.")
-    return report_for(match, puuid, benchmarks, winprob)
+    return report_for(match, puuid, benchmarks, winprob, references)
