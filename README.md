@@ -107,7 +107,7 @@ L'API Claude n'a pas été appelée avec une vraie clé. Ce qui est vérifié : 
 |---|---|---|
 | Probabilité de victoire | chances de l'équipe à chaque minute, à partir de l'écart d'or, d'XP, des tours, dragons, etc. | sur des parties plus récentes que celles d'entraînement : précision, score de Brier, **calibration** |
 | Repères | répartition de chaque statistique par rang, rôle et résultat | nombre de parties par groupe ; repli sur « tous rangs » si un rang manque de données |
-| Draft | victoire selon les 10 champions | face à une prédiction naïve ; attends 52 à 56 % sur de vraies parties |
+| Draft | victoire selon les 10 champions | face à une prédiction naïve ; n'est enregistré que s'il fait mieux qu'elle, ce qui demande des dizaines de milliers de parties (pas encore le cas sur 966 vraies parties) |
 
 À savoir avant de s'y fier :
 
@@ -124,10 +124,10 @@ L'API Claude n'a pas été appelée avec une vraie clé. Ce qui est vérifié : 
 | Collecte, analyse, modèles, coach, API | vérifiés par les tests, sur SQLite et MariaDB, avec des **parties simulées** |
 | Tolérance au format réel de Riot (champs et événements en plus, cas limites documentés) | vérifiée par `tests/test_format_reel.py`, sur des réponses **reconstruites d'après la documentation** |
 | Connexion au vrai serveur de Riot et lecture de ses refus | vérifiée (clé invalide → message clair, rien n'est enregistré) |
-| **Lecture de vraies parties avec une vraie clé** | **pas encore faite** : c'est le rôle de `lolcoach-collecte verifier` |
+| Lecture de vraies parties avec une vraie clé | vérifiée : 966 parties classées EUW collectées et analysées sans erreur de format ([docs/QUALITE.md](docs/QUALITE.md)) |
 | Mot du coach avec un vrai modèle local (Ollama, `gemma3:4b` et `llama3.2`) | vérifié de bout en bout, LoL Companion compris ; mesures plus haut |
 | Mot du coach avec l'API Claude | requêtes et erreurs vérifiées à travers le vrai SDK, face à un serveur simulé ; **jamais appelée avec une vraie clé** |
-| **Qualité des modèles sur de vraies parties** | **inconnue** : les chiffres de la démo viennent de parties simulées et ne disent rien du jeu réel. `lolcoach-entrainer` affiche les vraies mesures après une collecte |
+| Qualité des modèles sur de vraies parties | mesurée sur 966 parties Or : probabilité de victoire utile et bien calibrée (72,5 % contre 53,3 %), draft pas encore utile (non enregistré), 12 statistiques du diagnostic sur 13 stables chez un même joueur ([docs/QUALITE.md](docs/QUALITE.md)). Un seul rang et un seul serveur à ce jour |
 
 ## Sécurité et vie privée
 
@@ -153,7 +153,7 @@ LOLCOACH_TEST_DATABASE_URL=mysql+pymysql://utilisateur:motdepasse@localhost/ pyt
 
 La CI lance tout cela sur Python 3.11 et 3.13, sur MariaDB, avec les versions figées de `requirements-lock.txt`, et vérifie que le paquet installé fait tourner la démo.
 
-Le fonctionnement interne, les choix de conception et la marche à suivre pour faire évoluer le projet (nouvelle statistique, migration de la base, changement de l'API Riot) sont dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Les mesures de performance, les optimisations faites et celles volontairement écartées sont dans [docs/PERFORMANCES.md](docs/PERFORMANCES.md).
+Le fonctionnement interne, les choix de conception et la marche à suivre pour faire évoluer le projet (nouvelle statistique, migration de la base, changement de l'API Riot) sont dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Les mesures de performance, les optimisations faites et celles volontairement écartées sont dans [docs/PERFORMANCES.md](docs/PERFORMANCES.md). La qualité mesurée sur de vraies parties, et les défauts qu'elles ont permis de corriger, sont dans [docs/QUALITE.md](docs/QUALITE.md).
 
 Ordres de grandeur (1 500 parties simulées) : entraînement complet en 3 secondes, diagnostic en 34 ms au premier calcul puis moins d'une milliseconde, rapport d'une partie en 3 ms.
 

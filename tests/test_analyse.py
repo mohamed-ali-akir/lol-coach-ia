@@ -249,3 +249,18 @@ def test_report_focus_only_for_a_game_played_in_the_diagnosed_role(demo):
     other = Coach(demo.engine, demo.models_dir)
     other._diagnose = lambda *a, **k: type(diagnostic)(**{**vars(diagnostic), "role": "TOP"})
     assert "Ton axe de travail du moment" not in other.report(demo.puuid).text
+
+
+def test_a_metric_unstable_on_real_games_is_never_a_priority(demo):
+    """Sur 48 vrais joueurs Or, le rang en « morts seul face à plusieurs adversaires » ne
+    concordait pas d'une moitié des parties à l'autre (0,11) : une priorité serait du hasard.
+    Le joueur fictif de la démo, lui, meurt souvent isolé : la statistique reste mesurée."""
+    from lolcoach.coach.service import Coach
+
+    assert not mt.METRICS_BY_KEY["isolated_deaths"].priority_eligible
+    assert sum(not m.priority_eligible for m in mt.METRICS) == 1
+    diagnostic = Coach(demo.engine, demo.models_dir).diagnostic(demo.puuid).diagnostic
+    isolated = next(f for f in diagnostic.findings if f.metric == "isolated_deaths")
+    assert isolated.percentile < 50  # moins bon que les joueurs comparables…
+    assert not isolated.significant and isolated.priority == 0  # …mais jamais une priorité
+    assert "isolated_deaths" not in {f.metric for f in diagnostic.priorities}
