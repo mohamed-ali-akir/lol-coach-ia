@@ -248,6 +248,33 @@ def test_client_follows_riot_counts_across_processes():
     assert sum(clock.sleeps) >= 119  # le suivant attend au lieu de recevoir un 429
 
 
+@pytest.mark.parametrize(("platform", "region", "account_host", "match_host"), [
+    ("euw1", "europe", "europe.api.riotgames.com", "europe.api.riotgames.com"),
+    ("na1", "americas", "americas.api.riotgames.com", "americas.api.riotgames.com"),
+    ("kr", "asia", "asia.api.riotgames.com", "asia.api.riotgames.com"),
+    ("oc1", "sea", "asia.api.riotgames.com", "sea.api.riotgames.com"),
+    ("vn2", "sea", "asia.api.riotgames.com", "sea.api.riotgames.com"),
+])
+def test_account_and_match_routing(platform, region, account_host, match_host):
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.host)
+        if "/accounts/" in request.url.path:
+            return httpx.Response(200, json={"puuid": PUUID})
+        if "/league/" in request.url.path:
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json={})
+
+    client = RiotClient("RGAPI-test", platform, region,
+                        http=httpx.Client(transport=httpx.MockTransport(handler)),
+                        limiter=RateLimiter([(1000, 1.0)]))
+    client.account_by_riot_id("Moi", "TAG")
+    client.match("EUW1_1")
+    client.league_entries_by_puuid(PUUID)
+    assert seen == [account_host, match_host, f"{platform}.api.riotgames.com"]
+
+
 def test_unexpected_response_shape_is_a_riot_error():
     as_list = make_client(lambda request: httpx.Response(200, json=["pas", "un", "objet"]))
     with pytest.raises(RiotError, match="objet attendu"):

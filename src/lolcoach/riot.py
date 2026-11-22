@@ -32,6 +32,7 @@ RANKED_SOLO_QUEUE_ID = 420
 RANKED_SOLO_QUEUE = "RANKED_SOLO_5x5"
 
 MAX_RETRY_WAIT_S = 300.0  # on n'attend jamais plus longtemps entre deux tentatives
+ACCOUNT_REGIONS = frozenset({"americas", "asia", "europe"})
 WINDOW_MARGIN_S = 0.1  # marge : nos fenêtres ne sont pas parfaitement calées sur celles de Riot
 
 PUUID_RE = re.compile(r"^[A-Za-z0-9_-]{20,100}$")
@@ -176,6 +177,11 @@ class RiotClient:
     ) -> None:
         self._platform_url = f"https://{platform}.api.riotgames.com"
         self._region_url = f"https://{region}.api.riotgames.com"
+        # account-v1 n'est documenté que sur americas, asia et europe (les sources ne sont pas
+        # d'accord sur sea), et chacune de ces régions trouve n'importe quel compte : les
+        # serveurs routés vers sea (Océanie, Asie du Sud-Est) interrogent asia pour les comptes.
+        account_region = region if region in ACCOUNT_REGIONS else "asia"
+        self._account_url = f"https://{account_region}.api.riotgames.com"
         # Pas de suivi des redirections : la clé ne doit jamais partir vers un autre hôte.
         self._http = http or httpx.Client(timeout=15.0, follow_redirects=False)
         self._headers = {"X-Riot-Token": api_key}
@@ -288,7 +294,7 @@ class RiotClient:
             "/riot/account/v1/accounts/by-riot-id/"
             f"{path_segment(game_name)}/{path_segment(tag_line)}"
         )
-        return self._get_dict("account.by-riot-id", self._region_url + path)
+        return self._get_dict("account.by-riot-id", self._account_url + path)
 
     # --- match-v5 (routage régional) ---
     def match_ids(
